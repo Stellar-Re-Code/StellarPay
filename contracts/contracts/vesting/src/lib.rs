@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec, symbol_short};
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec, symbol_short, token};
 
 mod errors;
 mod storage;
@@ -84,7 +84,7 @@ impl VestingContract {
             id: schedule_id,
             grantor: grantor.clone(),
             beneficiary: beneficiary.clone(),
-            token,
+            token: token.clone(),
             total_amount,
             claimed_amount: 0,
             start_time,
@@ -96,8 +96,12 @@ impl VestingContract {
             revocable,
         };
 
-        // TODO: Transfer total_amount from grantor to contract (contributor task SC-16)
-        // token::Client::new(&env, &token).transfer(&grantor, &env.current_contract_address(), &total_amount);
+        let token_client = token::Client::new(&env, &token);
+        if token_client.balance(&grantor) < total_amount {
+            return Err(VestingError::InsufficientBalance);
+        }
+
+        token_client.transfer(&grantor, &env.current_contract_address(), &total_amount);
 
         set_schedule(&env, schedule_id, &schedule);
         set_schedule_count(&env, schedule_id + 1);
@@ -146,9 +150,12 @@ impl VestingContract {
             schedule.status = VestingStatus::FullyClaimed;
         }
 
-        // TODO: Transfer claimable to beneficiary (contributor task SC-17)
-        // token::Client::new(&env, &schedule.token)
-        //     .transfer(&env.current_contract_address(), &beneficiary, &claimable);
+        let token_client = token::Client::new(&env, &schedule.token);
+        if token_client.balance(&env.current_contract_address()) < claimable {
+            return Err(VestingError::InsufficientBalance);
+        }
+
+        token_client.transfer(&env.current_contract_address(), &beneficiary, &claimable);
 
         set_schedule(&env, schedule_id, &schedule);
 
@@ -191,11 +198,13 @@ impl VestingContract {
         schedule.status = VestingStatus::Revoked;
         schedule.total_amount = vested; // Cap at vested amount
 
-        // TODO: Return unvested tokens to grantor (contributor task SC-18)
-        // if unvested > 0 {
-        //     token::Client::new(&env, &schedule.token)
-        //         .transfer(&env.current_contract_address(), &grantor, &unvested);
-        // }
+        if unvested > 0 {
+            let token_client = token::Client::new(&env, &schedule.token);
+            if token_client.balance(&env.current_contract_address()) < unvested {
+                return Err(VestingError::InsufficientBalance);
+            }
+            token_client.transfer(&env.current_contract_address(), &grantor, &unvested);
+        }
 
         set_schedule(&env, schedule_id, &schedule);
 

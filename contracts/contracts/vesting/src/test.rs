@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, symbol_short};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, symbol_short, token};
 use types::VestingStatus;
 
 fn setup_env() -> (Env, Address, VestingContractClient<'static>) {
@@ -11,6 +11,11 @@ fn setup_env() -> (Env, Address, VestingContractClient<'static>) {
     let client = VestingContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
     (env, admin, client)
+}
+
+fn create_token_contract<'a>(e: &Env, admin: &Address) -> token::StellarAssetClient<'a> {
+    let contract_addr = e.register_stellar_asset_contract_v2(admin.clone()).address();
+    token::StellarAssetClient::new(e, &contract_addr)
 }
 
 #[test]
@@ -26,7 +31,11 @@ fn test_create_schedule() {
     let (env, admin, client) = setup_env();
     let grantor = Address::generate(&env);
     let beneficiary = Address::generate(&env);
-    let token = Address::generate(&env);
+    
+    let token_admin = Address::generate(&env);
+    let token_contract = create_token_contract(&env, &token_admin);
+    let token_client = token::Client::new(&env, &token_contract.address);
+    token_contract.mint(&grantor, &100_000);
 
     client.initialize(&admin);
 
@@ -36,11 +45,12 @@ fn test_create_schedule() {
 
     // 4-year vesting with 1-year cliff
     let year = 365 * 24 * 60 * 60_u64;
+    let total_amount = 100_000_i128;
     let schedule_id = client.create_schedule(
         &grantor,
         &beneficiary,
-        &token,
-        &100_000_i128,
+        &token_contract.address,
+        &total_amount,
         &1000_u64,     // start_time
         &year,         // cliff_duration (1 year)
         &25_000_i128,  // cliff_amount (25% for 1/4 time to match linear)
@@ -53,6 +63,127 @@ fn test_create_schedule() {
     let schedule = client.get_schedule(&schedule_id);
     assert_eq!(schedule.total_amount, 100_000);
     assert_eq!(schedule.status, VestingStatus::Active);
+
+    // Verify token transfers
+    assert_eq!(token_client.balance(&grantor), 0);
+    assert_eq!(token_client.balance(&client.address), 100_000);
+}
+
+#[test]
+fn test_claim_tokens() {
+    let (env, admin, client) = setup_env();
+    let grantor = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    
+    let token_admin = Address::generate(&env);
+    let token_contract = create_token_contract(&env, &token_admin);
+    let token_client = token::Client::new(&env, &token_contract.address);
+    token_contract.mint(&grantor, &100_000);
+
+    client.initialize(&admin);
+
+    let year = 365 * 24 * 60 * 60_u64;
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000;
+    });
+
+    let schedule_id = client.create_schedule(
+        &grantor,
+        &beneficiary,
+        &token_contract.address,
+        &100_000_i128,
+        &1000_u64,
+        &year,
+        &25_000_i128,
+        &(4 * year),
+        &symbol_short!("team"),
+        &true,
+    );
+
+    // Move to 2 years (50% vested)
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000 + (2 * year);
+    });
+
+    let claimed = client.claim(&beneficiary, &schedule_id);
+    assert_eq!(claimed, 50_000);
+    
+    assert_eq!(token_client.balance(&beneficiary), 50_000);
+    assert_eq!(token_client.balance(&client.address), 50_000);
+}
+
+#[test]
+fn test_revoke_withdrawal() {
+    let (env, admin, client) = setup_env();
+    let grantor = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    
+    let token_admin = Address::generate(&env);
+    let token_contract = create_token_contract(&env, &token_admin);
+    let token_client = token::Client::new(&env, &token_contract.address);
+    token_contract.mint(&grantor, &100_000);
+
+    client.initialize(&admin);
+
+    let year = 365 * 24 * 60 * 60_u64;
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000;
+    });
+
+    let schedule_id = client.create_schedule(
+        &grantor,
+        &beneficiary,
+        &token_contract.address,
+        &100_000_i128,
+        &1000_u64,
+        &year,
+        &25_000_i128,
+        &(4 * year),
+        &symbol_short!("team"),
+        &true,
+    );
+
+    // Move to 2 years, then revoke
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000 + (2 * year);
+    });
+
+    let unvested = client.revoke(&grantor, &schedule_id);
+    assert_eq!(unvested, 50_000);
+
+    assert_eq!(token_client.balance(&grantor), 50_000);
+    assert_eq!(token_client.balance(&client.address), 50_000); // 50k still there for beneficiary to claim
+}
+
+#[test]
+fn test_insufficient_balance_on_create() {
+    let (env, admin, client) = setup_env();
+    let grantor = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    
+    let token_admin = Address::generate(&env);
+    let token_contract = create_token_contract(&env, &token_admin);
+    // Grantor has 0 tokens
+
+    client.initialize(&admin);
+
+    let year = 365 * 24 * 60 * 60_u64;
+
+    let result = client.try_create_schedule(
+        &grantor,
+        &beneficiary,
+        &token_contract.address,
+        &100_000_i128,
+        &1000_u64,
+        &year,
+        &25_000_i128,
+        &(4 * year),
+        &symbol_short!("fail"),
+        &true,
+    );
+
+    assert!(result.is_err());
+    // Error(Contract, #12) is InsufficientBalance
 }
 
 #[test]
@@ -60,7 +191,10 @@ fn test_cliff_not_reached() {
     let (env, admin, client) = setup_env();
     let grantor = Address::generate(&env);
     let beneficiary = Address::generate(&env);
-    let token = Address::generate(&env);
+    
+    let token_admin = Address::generate(&env);
+    let token_contract = create_token_contract(&env, &token_admin);
+    token_contract.mint(&grantor, &100_000);
 
     client.initialize(&admin);
 
@@ -73,7 +207,7 @@ fn test_cliff_not_reached() {
     let schedule_id = client.create_schedule(
         &grantor,
         &beneficiary,
-        &token,
+        &token_contract.address,
         &100_000_i128,
         &1000_u64,
         &year,
@@ -98,7 +232,10 @@ fn test_vesting_after_cliff() {
     let (env, admin, client) = setup_env();
     let grantor = Address::generate(&env);
     let beneficiary = Address::generate(&env);
-    let token = Address::generate(&env);
+    
+    let token_admin = Address::generate(&env);
+    let token_contract = create_token_contract(&env, &token_admin);
+    token_contract.mint(&grantor, &100_000);
 
     client.initialize(&admin);
 
@@ -111,7 +248,7 @@ fn test_vesting_after_cliff() {
     let schedule_id = client.create_schedule(
         &grantor,
         &beneficiary,
-        &token,
+        &token_contract.address,
         &100_000_i128,
         &1000_u64,
         &year,
@@ -132,52 +269,14 @@ fn test_vesting_after_cliff() {
 }
 
 #[test]
-fn test_revoke_schedule() {
-    let (env, admin, client) = setup_env();
-    let grantor = Address::generate(&env);
-    let beneficiary = Address::generate(&env);
-    let token = Address::generate(&env);
-
-    client.initialize(&admin);
-
-    let year = 365 * 24 * 60 * 60_u64;
-
-    env.ledger().with_mut(|li| {
-        li.timestamp = 1000;
-    });
-
-    let schedule_id = client.create_schedule(
-        &grantor,
-        &beneficiary,
-        &token,
-        &100_000_i128,
-        &1000_u64,
-        &year,
-        &25_000_i128,
-        &(4 * year),
-        &symbol_short!("team"),
-        &true,
-    );
-
-    // Move to 2 years, then revoke
-    env.ledger().with_mut(|li| {
-        li.timestamp = 1000 + (2 * year);
-    });
-
-    let unvested = client.revoke(&grantor, &schedule_id);
-    assert_eq!(unvested, 50_000);
-
-    let schedule = client.get_schedule(&schedule_id);
-    assert_eq!(schedule.status, VestingStatus::Revoked);
-    assert_eq!(schedule.total_amount, 50_000); // Capped at vested
-}
-
-#[test]
 fn test_explicit_cliff_amount() {
     let (env, admin, client) = setup_env();
     let grantor = Address::generate(&env);
     let beneficiary = Address::generate(&env);
-    let token = Address::generate(&env);
+    
+    let token_admin = Address::generate(&env);
+    let token_contract = create_token_contract(&env, &token_admin);
+    token_contract.mint(&grantor, &100_000);
 
     client.initialize(&admin);
 
@@ -187,13 +286,10 @@ fn test_explicit_cliff_amount() {
         li.timestamp = 1000;
     });
 
-    // 4-year vesting, 1-year cliff
-    // Total: 100,000
-    // Cliff amount: 50,000 (50%) - explicitly higher than time-proportional (25%)
     let schedule_id = client.create_schedule(
         &grantor,
         &beneficiary,
-        &token,
+        &token_contract.address,
         &100_000_i128,
         &1000_u64,
         &year,
@@ -204,19 +300,13 @@ fn test_explicit_cliff_amount() {
     );
 
     // 1. Check exactly at cliff
-    // At cliff time (1 year), 50% should be vested immediately
     env.ledger().with_mut(|li| {
         li.timestamp = 1000 + year;
     });
     let progress = client.get_progress(&schedule_id);
     assert_eq!(progress.vested_amount, 50_000);
 
-    // 2. Check halfway through remaining vesting (1.5 years after cliff = 2.5 years total)
-    // Remaining to vest: 50,000
-    // Duration to vest it: 3 years
-    // Time elapsed since cliff: 1.5 years
-    // Vested from remaining: 50,000 * 0.5 = 25,000
-    // Total vested: 50,000 (cliff) + 25,000 (linear) = 75,000
+    // 2. Check halfway through remaining vesting
     env.ledger().with_mut(|li| {
         li.timestamp = 1000 + year + (year + year / 2);
     });
