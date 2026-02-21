@@ -53,3 +53,14 @@ pub struct StreamSummary {
     pub claimed_amount: i128,
     pub status: StreamStatus,
 }
+
+/// Parameters for creating a single stream in a batch.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateStreamParams {
+    pub recipient: Address,
+    pub token: Address,
+    pub total_amount: i128,
+    pub start_time: u64,
+    pub end_time: u64,
+}

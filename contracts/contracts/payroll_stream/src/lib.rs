@@ -11,7 +11,7 @@ use storage::{
     get_stream, set_stream, add_sender_stream, add_recipient_stream,
     get_sender_streams, get_recipient_streams,
 };
-use types::{PayrollStream, StreamStatus};
+use types::{PayrollStream, StreamStatus, CreateStreamParams};
 
 #[contract]
 pub struct PayrollStreamContract;
@@ -93,6 +93,76 @@ impl PayrollStreamContract {
         );
 
         Ok(stream_id)
+    }
+
+    /// Create multiple payment streams in a single transaction.
+    /// Emits a single batch event with all created stream IDs.
+    pub fn create_batch_streams(
+        env: Env,
+        sender: Address,
+        streams: Vec<CreateStreamParams>,
+    ) -> Result<Vec<u32>, StreamError> {
+        if !has_admin(&env) {
+            return Err(StreamError::NotInitialized);
+        }
+        sender.require_auth();
+
+        let mut stream_ids: Vec<u32> = Vec::new(&env);
+        let mut count = get_stream_count(&env);
+
+        for stream_params in streams.iter() {
+            let recipient = stream_params.recipient;
+            let token = stream_params.token;
+            let total_amount = stream_params.total_amount;
+            let start_time = stream_params.start_time;
+            let end_time = stream_params.end_time;
+
+            if sender == recipient {
+                return Err(StreamError::InvalidRecipient);
+            }
+            if total_amount <= 0 {
+                return Err(StreamError::InvalidAmount);
+            }
+            if end_time <= start_time {
+                return Err(StreamError::InvalidDuration);
+            }
+
+            let duration = end_time - start_time;
+            let rate_per_second = total_amount / (duration as i128);
+
+            let stream_id = count;
+            let stream = PayrollStream {
+                id: stream_id,
+                sender: sender.clone(),
+                recipient: recipient.clone(),
+                token: token.clone(),
+                total_amount,
+                claimed_amount: 0,
+                start_time,
+                end_time,
+                last_claim_time: start_time,
+                status: StreamStatus::Active,
+                rate_per_second,
+            };
+
+            // TODO: Transfer total_amount from sender to contract (batch transfer optimization possible)
+            
+            set_stream(&env, stream_id, &stream);
+            add_sender_stream(&env, &sender, stream_id);
+            add_recipient_stream(&env, &recipient, stream_id);
+            
+            stream_ids.push_back(stream_id);
+            count += 1;
+        }
+
+        set_stream_count(&env, count);
+
+        env.events().publish(
+            (symbol_short!("b_create"), sender.clone()),
+            stream_ids.clone(),
+        );
+
+        Ok(stream_ids)
     }
 
     /// Claim accrued tokens from an active stream.

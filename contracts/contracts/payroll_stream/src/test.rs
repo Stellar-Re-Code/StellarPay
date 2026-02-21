@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, symbol_short};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, Vec};
 use types::StreamStatus;
 
 fn setup_env() -> (Env, Address, PayrollStreamContractClient<'static>) {
@@ -15,7 +15,7 @@ fn setup_env() -> (Env, Address, PayrollStreamContractClient<'static>) {
 
 #[test]
 fn test_initialize() {
-    let (env, admin, client) = setup_env();
+    let (_env, admin, client) = setup_env();
     client.initialize(&admin);
     assert_eq!(client.get_admin(), admin);
     assert_eq!(client.get_stream_count(), 0);
@@ -24,7 +24,7 @@ fn test_initialize() {
 #[test]
 #[should_panic]
 fn test_double_initialize() {
-    let (env, admin, client) = setup_env();
+    let (_env, admin, client) = setup_env();
     client.initialize(&admin);
     client.initialize(&admin);
 }
@@ -56,6 +56,51 @@ fn test_create_stream() {
     assert_eq!(stream.total_amount, 10000);
     assert_eq!(stream.status, StreamStatus::Active);
     assert_eq!(stream.rate_per_second, 10); // 10000 / 1000 seconds
+}
+
+#[test]
+fn test_create_batch_streams() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.initialize(&admin);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000;
+    });
+
+    let mut streams = Vec::new(&env);
+    
+    // Stream 1
+    streams.push_back(CreateStreamParams {
+        recipient: Address::generate(&env),
+        token: token.clone(),
+        total_amount: 10000,
+        start_time: 1000,
+        end_time: 2000,
+    });
+
+    // Stream 2
+    streams.push_back(CreateStreamParams {
+        recipient: Address::generate(&env),
+        token: token.clone(),
+        total_amount: 20000,
+        start_time: 1000,
+        end_time: 3000,
+    });
+
+    let stream_ids = client.create_batch_streams(&sender, &streams);
+    
+    assert_eq!(stream_ids.len(), 2);
+    assert_eq!(stream_ids.get(0).unwrap(), 0);
+    assert_eq!(stream_ids.get(1).unwrap(), 1);
+
+    let stream0 = client.get_stream(&0);
+    assert_eq!(stream0.total_amount, 10000);
+    
+    let stream1 = client.get_stream(&1);
+    assert_eq!(stream1.total_amount, 20000);
 }
 
 #[test]
@@ -111,14 +156,11 @@ fn test_cancel_stream() {
         &2000_u64,
     );
 
-    client.cancel_stream(&sender, &stream_id);
     let stream = client.get_stream(&stream_id);
-    assert_eq!(stream.status, StreamStatus::Cancelled);
-}
+    assert_eq!(stream.status, StreamStatus::Active);
 
-// TODO: Additional tests for contributors (see SC-14 in issues)
-// - test_claim_flow
-// - test_claim_after_stream_ends
-// - test_cancel_by_non_sender_fails
-// - test_create_stream_invalid_amount
-// - test_multiple_streams_same_recipient
+    client.cancel_stream(&sender, &stream_id);
+    
+    let stream_cancelled = client.get_stream(&stream_id);
+    assert_eq!(stream_cancelled.status, StreamStatus::Cancelled);
+}
