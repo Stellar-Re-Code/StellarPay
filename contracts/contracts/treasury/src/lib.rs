@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec, symbol_short};
+use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Symbol, Vec};
 
 mod errors;
 mod storage;
@@ -7,8 +7,8 @@ mod types;
 
 use errors::TreasuryError;
 use storage::{
-    get_admin, get_threshold, get_signers, has_admin, set_admin, set_threshold,
-    set_signers, get_proposal_count, set_proposal_count, get_withdrawal, set_withdrawal,
+    get_admin, get_proposal_count, get_signers, get_threshold, get_withdrawal, has_admin,
+    set_admin, set_proposal_count, set_signers, set_threshold, set_withdrawal,
 };
 use types::{WithdrawalRequest, WithdrawalStatus};
 
@@ -39,17 +39,20 @@ impl TreasuryContract {
         set_threshold(&env, threshold);
         set_proposal_count(&env, 0);
 
-        env.events().publish(
-            (symbol_short!("init"),),
-            admin.clone(),
-        );
+        env.events()
+            .publish((symbol_short!("init"),), admin.clone());
 
         Ok(())
     }
 
     /// Deposit native tokens into the treasury.
     /// Any address can deposit funds into the treasury vault.
-    pub fn deposit(env: Env, from: Address, _token: Address, amount: i128) -> Result<(), TreasuryError> {
+    pub fn deposit(
+        env: Env,
+        from: Address,
+        _token: Address,
+        amount: i128,
+    ) -> Result<(), TreasuryError> {
         if !has_admin(&env) {
             return Err(TreasuryError::NotInitialized);
         }
@@ -64,10 +67,8 @@ impl TreasuryContract {
         // TODO: Invoke token contract transfer (contributor task SC-4)
         // token::Client::new(&env, &token).transfer(&from, &contract_address, &amount);
 
-        env.events().publish(
-            (symbol_short!("deposit"), from.clone()),
-            amount,
-        );
+        env.events()
+            .publish((symbol_short!("deposit"), from.clone()), amount);
 
         Ok(())
     }
@@ -121,10 +122,8 @@ impl TreasuryContract {
         set_withdrawal(&env, proposal_id, &request);
         set_proposal_count(&env, proposal_id + 1);
 
-        env.events().publish(
-            (symbol_short!("w_create"), proposer.clone()),
-            proposal_id,
-        );
+        env.events()
+            .publish((symbol_short!("w_create"), proposer.clone()), proposal_id);
 
         Ok(proposal_id)
     }
@@ -154,8 +153,8 @@ impl TreasuryContract {
             return Err(TreasuryError::NotASigner);
         }
 
-        let mut request = get_withdrawal(&env, proposal_id)
-            .ok_or(TreasuryError::ProposalNotFound)?;
+        let mut request =
+            get_withdrawal(&env, proposal_id).ok_or(TreasuryError::ProposalNotFound)?;
 
         if request.status != WithdrawalStatus::Pending {
             return Err(TreasuryError::ProposalNotPending);
@@ -178,10 +177,8 @@ impl TreasuryContract {
 
         set_withdrawal(&env, proposal_id, &request);
 
-        env.events().publish(
-            (symbol_short!("approve"), signer.clone()),
-            proposal_id,
-        );
+        env.events()
+            .publish((symbol_short!("approve"), signer.clone()), proposal_id);
 
         Ok(())
     }
@@ -198,23 +195,29 @@ impl TreasuryContract {
         }
         executor.require_auth();
 
-        let mut request = get_withdrawal(&env, proposal_id)
-            .ok_or(TreasuryError::ProposalNotFound)?;
+        let mut request =
+            get_withdrawal(&env, proposal_id).ok_or(TreasuryError::ProposalNotFound)?;
 
         if request.status != WithdrawalStatus::Approved {
             return Err(TreasuryError::ProposalNotApproved);
         }
 
-        // TODO: Execute token transfer (contributor task SC-5)
-        // token::Client::new(&env, &request.token)
-        //     .transfer(&env.current_contract_address(), &request.recipient, &request.amount);
+        let contract_address = env.current_contract_address();
+        let token_client = token::Client::new(&env, &request.token);
+
+        let contract_balance = token_client.balance(&contract_address);
+        if contract_balance < request.amount {
+            return Err(TreasuryError::InsufficientBalance);
+        }
+
+        token_client.transfer(&contract_address, &request.recipient, &request.amount);
 
         request.status = WithdrawalStatus::Executed;
         set_withdrawal(&env, proposal_id, &request);
 
         env.events().publish(
-            (symbol_short!("execute"),),
-            proposal_id,
+            (symbol_short!("w_exec"), request.recipient.clone()),
+            request.amount,
         );
 
         Ok(())
@@ -240,10 +243,7 @@ impl TreasuryContract {
         signers.push_back(new_signer.clone());
         set_signers(&env, &signers);
 
-        env.events().publish(
-            (symbol_short!("s_add"),),
-            new_signer,
-        );
+        env.events().publish((symbol_short!("s_add"),), new_signer);
 
         Ok(())
     }
@@ -284,16 +284,17 @@ impl TreasuryContract {
 
         set_signers(&env, &new_signers);
 
-        env.events().publish(
-            (symbol_short!("s_remove"),),
-            signer,
-        );
+        env.events().publish((symbol_short!("s_remove"),), signer);
 
         Ok(())
     }
 
     /// Update the approval threshold. Restricted to admin.
-    pub fn update_threshold(env: Env, admin: Address, new_threshold: u32) -> Result<(), TreasuryError> {
+    pub fn update_threshold(
+        env: Env,
+        admin: Address,
+        new_threshold: u32,
+    ) -> Result<(), TreasuryError> {
         if !has_admin(&env) {
             return Err(TreasuryError::NotInitialized);
         }
@@ -310,10 +311,8 @@ impl TreasuryContract {
 
         set_threshold(&env, new_threshold);
 
-        env.events().publish(
-            (symbol_short!("t_upd"),),
-            new_threshold,
-        );
+        env.events()
+            .publish((symbol_short!("t_upd"),), new_threshold);
 
         Ok(())
     }
@@ -358,7 +357,11 @@ impl TreasuryContract {
     }
 
     /// Upgrade the contract WASM. Restricted to admin.
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), TreasuryError> {
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), TreasuryError> {
         let stored_admin = get_admin(&env);
         if admin != stored_admin {
             return Err(TreasuryError::Unauthorized);

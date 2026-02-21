@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror};
+use soroban_sdk::contracterror;
 
 /// Error codes for the Treasury contract.
 /// Each variant maps to a unique u32 for on-chain error reporting.
@@ -28,4 +28,6 @@ pub enum TreasuryError {
     AlreadyApproved = 10,
     /// The address is already registered as a signer.
     AlreadyASigner = 11,
+    /// The contract has insufficient token balance for the withdrawal.
+    InsufficientBalance = 12,
 }
