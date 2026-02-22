@@ -9,6 +9,7 @@ use errors::TreasuryError;
 use storage::{
     get_admin, get_proposal_count, get_signers, get_threshold, get_withdrawal, has_admin,
     set_admin, set_proposal_count, set_signers, set_threshold, set_withdrawal,
+    extend_instance_ttl, extend_withdrawal_ttl,
 };
 use types::{TreasuryConfig, WithdrawalRequest, WithdrawalStatus};
 
@@ -38,6 +39,8 @@ impl TreasuryContract {
         set_signers(&env, &signers);
         set_threshold(&env, threshold);
         set_proposal_count(&env, 0);
+
+        extend_instance_ttl(&env);
 
         env.events()
             .publish((symbol_short!("init"),), admin.clone());
@@ -122,6 +125,9 @@ impl TreasuryContract {
         set_withdrawal(&env, proposal_id, &request);
         set_proposal_count(&env, proposal_id + 1);
 
+        extend_instance_ttl(&env);
+        extend_withdrawal_ttl(&env, proposal_id);
+
         env.events()
             .publish((symbol_short!("w_create"), proposer.clone()), proposal_id);
 
@@ -177,6 +183,8 @@ impl TreasuryContract {
 
         set_withdrawal(&env, proposal_id, &request);
 
+        extend_withdrawal_ttl(&env, proposal_id);
+
         env.events()
             .publish((symbol_short!("approve"), signer.clone()), proposal_id);
 
@@ -215,6 +223,8 @@ impl TreasuryContract {
         request.status = WithdrawalStatus::Executed;
         set_withdrawal(&env, proposal_id, &request);
 
+        extend_withdrawal_ttl(&env, proposal_id);
+
         env.events().publish(
             (symbol_short!("w_exec"), request.recipient.clone()),
             request.amount,
@@ -242,6 +252,8 @@ impl TreasuryContract {
         }
         signers.push_back(new_signer.clone());
         set_signers(&env, &signers);
+
+        extend_instance_ttl(&env);
 
         env.events().publish((symbol_short!("s_add"),), new_signer);
 
@@ -284,6 +296,8 @@ impl TreasuryContract {
 
         set_signers(&env, &new_signers);
 
+        extend_instance_ttl(&env);
+
         env.events().publish((symbol_short!("s_remove"),), signer);
 
         Ok(())
@@ -310,6 +324,8 @@ impl TreasuryContract {
         }
 
         set_threshold(&env, new_threshold);
+
+        extend_instance_ttl(&env);
 
         env.events()
             .publish((symbol_short!("t_upd"),), new_threshold);
