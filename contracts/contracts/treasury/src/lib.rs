@@ -10,7 +10,7 @@ use storage::{
     get_admin, get_proposal_count, get_signers, get_threshold, get_withdrawal, has_admin,
     set_admin, set_proposal_count, set_signers, set_threshold, set_withdrawal,
 };
-use types::{WithdrawalRequest, WithdrawalStatus};
+use types::{TreasuryConfig, WithdrawalRequest, WithdrawalStatus};
 
 #[contract]
 pub struct TreasuryContract;
@@ -354,6 +354,19 @@ impl TreasuryContract {
             return Err(TreasuryError::NotInitialized);
         }
         Ok(get_proposal_count(&env))
+    }
+
+    /// Get the full treasury configuration snapshot.
+    pub fn get_config(env: Env) -> Result<TreasuryConfig, TreasuryError> {
+        if !has_admin(&env) {
+            return Err(TreasuryError::NotInitialized);
+        }
+        Ok(TreasuryConfig {
+            admin: get_admin(&env),
+            signers: get_signers(&env),
+            threshold: get_threshold(&env),
+            proposal_count: get_proposal_count(&env),
+        })
     }
 
     /// Upgrade the contract WASM. Restricted to admin.
