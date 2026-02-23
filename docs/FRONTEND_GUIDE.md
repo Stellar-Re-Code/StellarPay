@@ -1,6 +1,6 @@
-# Frontend Integration Guide — OrbitPay
+# Frontend Integration Guide — StellarPay
 
-This guide covers the frontend architecture and how to integrate with OrbitPay's Soroban contracts.
+This guide covers the frontend architecture and how to integrate with StellarPay's Soroban contracts.
 
 ## 🛠 Prerequisites
 

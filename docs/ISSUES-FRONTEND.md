@@ -1,6 +1,6 @@
-# Frontend Issues — OrbitPay 🎨
+# Frontend Issues — StellarPay 🎨
 
-This document tracks all UI/UX and frontend integration tasks for the **OrbitPay** dashboard.
+This document tracks all UI/UX and frontend integration tasks for the **StellarPay** dashboard.
 
 ### 🛑 STRICT RULE FOR CONTRIBUTORS
 **When you complete an issue:**

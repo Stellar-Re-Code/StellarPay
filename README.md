@@ -1,17 +1,17 @@
-# OrbitPay
+# StellarPay
 
 Decentralized Payroll, Vesting & Treasury Protocol on Stellar Soroban.
 
 ```
-  ___       _     _ _   ____
- / _ \ _ __| |__ (_) |_|  _ \ __ _ _   _
-| | | | '__| '_ \| | __| |_) / _` | | | |
-| |_| | |  | |_) | | |_|  __/ (_| | |_| |
- \___/|_|  |_.__/|_|\__|_|   \__,_|\__, |
-                                    |___/
+   _____ _            ____            ____        __
+  / ____| |          / __ \___  _____/ __ \____ _/ /_____ _
+ | (___ | | _____  _| |  | \ \/ / __/ / / / __ `/ __/ __ `/
+  \___ \| |/ / _ \/ / |  | |>  </ /_/ /_/ / /_/ / /_/ /_/ /
+  ____) |   <  __/ | |__| /_/\_\__,_.___/\__,_/\__/\__,_/
+ |_____/|_|\_\___|_|\____/    /____/
 ```
 
-**OrbitPay** is a protocol that enables startups, DAOs, and remote-first organizations to manage payroll, token vesting, and treasury operations entirely on-chain using Stellar Soroban smart contracts.
+**StellarPay** is a protocol that enables startups, DAOs, and remote-first organizations to manage payroll, token vesting, and treasury operations entirely on-chain using Stellar Soroban smart contracts.
 
 ## 💡 The Idea
 
@@ -68,7 +68,7 @@ graph TD
 ## 📂 Repository Structure
 
 ```
-OrbitPay/
+StellarPay/
 ├── contracts/                        # Soroban workspace
 │   └── contracts/
 │       ├── treasury/                 # Multi-sig treasury (8 issues)
@@ -107,8 +107,8 @@ OrbitPay/
 
 Clone the repository:
 ```bash
-git clone https://github.com/YOUR_USERNAME/OrbitPay.git
-cd OrbitPay
+git clone https://github.com/Stellar-Re-Code/StellarPay.git
+cd StellarPay
 ```
 
 Verify contract integrity:
@@ -150,4 +150,4 @@ We welcome contributions! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for 
 
 ---
 
-Project maintained under the OrbitPay organization.
+Project maintained under the Stellar-Re-Code organization.

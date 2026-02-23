@@ -1,4 +1,4 @@
-# Contributing to OrbitPay
+# Contributing to StellarPay
 
 Thank you for your interest in building decentralized payroll infrastructure on Stellar! This guide will help you contribute effectively.
 

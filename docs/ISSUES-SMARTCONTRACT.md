@@ -1,6 +1,6 @@
-# Smart Contract Issues — OrbitPay 🧠
+# Smart Contract Issues — StellarPay 🧠
 
-This document tracks all smart contract development tasks for the **OrbitPay** protocol.
+This document tracks all smart contract development tasks for the **StellarPay** protocol.
 Each issue is self-contained and can be picked up independently.
 
 ### 🛑 STRICT RULE FOR CONTRIBUTORS

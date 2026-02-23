@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import '@/styles/globals.css'
 
 export const metadata: Metadata = {
-  title: 'OrbitPay — Decentralized Payroll & Treasury on Stellar',
+  title: 'StellarPay — Decentralized Payroll & Treasury on Stellar',
   description:
     'Manage payroll streaming, token vesting, and multi-sig treasury operations on-chain with Stellar Soroban smart contracts.',
 }

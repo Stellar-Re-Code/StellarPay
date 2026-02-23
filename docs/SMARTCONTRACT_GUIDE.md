@@ -1,6 +1,6 @@
-# Smart Contract Development Guide — OrbitPay
+# Smart Contract Development Guide — StellarPay
 
-This guide covers everything you need to know to contribute to OrbitPay's Soroban smart contracts.
+This guide covers everything you need to know to contribute to StellarPay's Soroban smart contracts.
 
 ## 🛠 Prerequisites
 
