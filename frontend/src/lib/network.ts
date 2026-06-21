@@ -3,29 +3,32 @@
  * Contributors: see FE-4 for full implementation.
  */
 
+import * as StellarSdk from '@stellar/stellar-sdk'
+import { env, validateEnv } from './env'
+
+// Validate env when setting up network config
+try {
+  if (typeof window !== 'undefined') {
+    validateEnv()
+  }
+} catch (e) {
+  console.error(e)
+}
+
 export const NETWORK = {
-  name: 'Testnet',
-  networkPassphrase: 'Test SDF Network ; September 2015',
-  rpcUrl: 'https://soroban-testnet.stellar.org',
+  name: 'Network',
+  networkPassphrase: env.networkPassphrase || 'Test SDF Network ; September 2015',
+  rpcUrl: env.rpcUrl || 'https://soroban-testnet.stellar.org',
   horizonUrl: 'https://horizon-testnet.stellar.org',
 } as const
 
-/**
- * Contract IDs — these will be populated after deployment.
- * TODO: Add deployed contract IDs (contributor task FE-4)
- */
 export const CONTRACTS = {
   treasury: '',
-  payrollStream: '',
+  payrollStream: env.payrollContractId || '',
   vesting: '',
   governance: '',
 } as const
 
-/**
- * Creates a Soroban Server instance for RPC calls.
- * TODO: Implement full provider setup (contributor task FE-4)
- */
 export function getSorobanServer() {
-  // Return placeholder — contributor should implement with @stellar/stellar-sdk
-  return null
+  return new StellarSdk.rpc.Server(NETWORK.rpcUrl, { allowHttp: NETWORK.rpcUrl.startsWith('http://') })
 }
