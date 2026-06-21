@@ -9,6 +9,10 @@ node_modules/
 frontend/.next/
 frontend/out/
 
+# TypeScript / Next generated
+*.tsbuildinfo
+frontend/next-env.d.ts
+
 # IDE
 .vscode/
 .idea/

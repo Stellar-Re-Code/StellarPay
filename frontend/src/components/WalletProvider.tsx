@@ -1,77 +1,116 @@
 'use client'
 
-import React, { createContext, useContext, useState, useEffect } from 'react'
-import { isFreighterInstalled, connectWallet } from '@/lib/wallet'
-import { NETWORK } from '@/lib/network'
-import { getNetworkDetails } from '@stellar/freighter-api'
+/**
+ * Wallet context + provider. Tracks the connected Freighter account and exposes
+ * connect/disconnect actions to the whole app. Wrapped around the tree in the
+ * root layout.
+ */
 
-interface WalletContextType {
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
+import {
+  connectWallet,
+  getAddress,
+  isAllowed,
+  isFreighterInstalled,
+} from '@/lib/wallet'
+
+export interface WalletContextValue {
   address: string | null
+  isConnected: boolean
   isConnecting: boolean
+  isInstalled: boolean | null
   error: string | null
   connect: () => Promise<void>
   disconnect: () => void
 }
 
-const WalletContext = createContext<WalletContextType | undefined>(undefined)
+const WalletContext = createContext<WalletContextValue | null>(null)
 
-export function WalletProvider({ children }: { children: React.ReactNode }) {
+const STORAGE_KEY = 'stellarpay.wallet.connected'
+
+export function WalletProvider({ children }: { children: ReactNode }) {
   const [address, setAddress] = useState<string | null>(null)
   const [isConnecting, setIsConnecting] = useState(false)
+  const [isInstalled, setIsInstalled] = useState<boolean | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // On mount: detect Freighter and silently restore a prior session.
   useEffect(() => {
-    // Optionally check if already connected and update address on load
-    const init = async () => {
+    let active = true
+    ;(async () => {
+      const installed = await isFreighterInstalled()
+      if (!active) return
+      setIsInstalled(installed)
+      if (!installed) return
       try {
-        const installed = await isFreighterInstalled()
-        if (installed) {
-          // You could try an automatic reconnection here if Freighter supports it without prompts
+        const previouslyConnected =
+          typeof window !== 'undefined' && window.localStorage.getItem(STORAGE_KEY) === '1'
+        if (previouslyConnected && (await isAllowed())) {
+          const pk = await getAddress()
+          if (active) setAddress(pk)
         }
-      } catch (err) {
-        console.error(err)
+      } catch {
+        // Silent — user can connect manually.
       }
+    })()
+    return () => {
+      active = false
     }
-    init()
   }, [])
 
-  const connect = async () => {
-    setIsConnecting(true)
+  const connect = useCallback(async () => {
     setError(null)
+    setIsConnecting(true)
     try {
-      const address = await connectWallet()
-      if (address) {
-        const networkDetails = await getNetworkDetails()
-        if (networkDetails.network !== NETWORK.name) {
-          throw new Error(`Please switch Freighter to ${NETWORK.name} network`)
-        }
-        setAddress(address)
-      } else {
-        throw new Error('User rejected connection')
+      const pk = await connectWallet()
+      setAddress(pk)
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(STORAGE_KEY, '1')
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to connect wallet')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to connect wallet.')
+      setAddress(null)
     } finally {
       setIsConnecting(false)
     }
-  }
+  }, [])
 
-  const disconnect = () => {
+  const disconnect = useCallback(() => {
     setAddress(null)
     setError(null)
-  }
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(STORAGE_KEY)
+    }
+  }, [])
 
-  return (
-    <WalletContext.Provider value={{ address, isConnecting, error, connect, disconnect }}>
-      {children}
-    </WalletContext.Provider>
+  const value = useMemo<WalletContextValue>(
+    () => ({
+      address,
+      isConnected: address !== null,
+      isConnecting,
+      isInstalled,
+      error,
+      connect,
+      disconnect,
+    }),
+    [address, isConnecting, isInstalled, error, connect, disconnect],
   )
+
+  return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>
 }
 
-export function useWallet() {
-  const context = useContext(WalletContext)
-  if (context === undefined) {
+export function useWallet(): WalletContextValue {
+  const ctx = useContext(WalletContext)
+  if (!ctx) {
     throw new Error('useWallet must be used within a WalletProvider')
   }
-  return context
+  return ctx
 }
