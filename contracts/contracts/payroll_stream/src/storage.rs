@@ -51,6 +51,10 @@ pub fn set_stream(env: &Env, id: u32, stream: &PayrollStream) {
     env.storage().persistent().set(&DataKey::Stream(id), stream);
 }
 
+pub fn extend_stream_ttl(env: &Env, id: u32, threshold: u32, extend_to: u32) {
+    env.storage().persistent().extend_ttl(&DataKey::Stream(id), threshold, extend_to);
+}
+
 // ── Index helpers for sender/recipient stream lookups ────────────
 
 pub fn get_sender_streams(env: &Env, sender: &Address) -> Vec<u32> {

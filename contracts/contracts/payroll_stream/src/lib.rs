@@ -8,10 +8,10 @@ mod types;
 use errors::StreamError;
 use storage::{
     get_admin, has_admin, set_admin, get_stream_count, set_stream_count,
-    get_stream, set_stream, add_sender_stream, add_recipient_stream,
+    get_stream, set_stream, extend_stream_ttl, add_sender_stream, add_recipient_stream,
     get_sender_streams, get_recipient_streams,
 };
-use types::{PayrollStream, StreamStatus, CreateStreamParams};
+use types::{PayrollStream, StreamStatus, CreateStreamParams, CancelSettlement};
 
 #[contract]
 pub struct PayrollStreamContract;
@@ -220,7 +220,7 @@ impl PayrollStreamContract {
         env: Env,
         sender: Address,
         stream_id: u32,
-    ) -> Result<(), StreamError> {
+    ) -> Result<CancelSettlement, StreamError> {
         if !has_admin(&env) {
             return Err(StreamError::NotInitialized);
         }
@@ -243,7 +243,11 @@ impl PayrollStreamContract {
         let claimable = Self::calculate_claimable(&env, &stream);
         let refund = stream.total_amount - stream.claimed_amount - claimable;
 
+        // Set claimed/settled accounting
+        stream.claimed_amount += claimable;
+        stream.last_claim_time = env.ledger().timestamp();
         stream.status = StreamStatus::Cancelled;
+
         let contract_addr = env.current_contract_address();
         let token_client = token::Client::new(&env, &stream.token);
 
@@ -255,13 +259,25 @@ impl PayrollStreamContract {
         }
 
         set_stream(&env, stream_id, &stream);
+        
+        // Extend TTL (approximately 30 days of ledgers: 17280 * 30)
+        extend_stream_ttl(&env, stream_id, 17280 * 30, 17280 * 30);
 
-        env.events().publish(
-            (symbol_short!("cancel"), sender.clone()),
+        let settlement = CancelSettlement {
             stream_id,
+            recipient: stream.recipient.clone(),
+            sender: sender.clone(),
+            recipient_amount: claimable,
+            sender_refund: refund,
+        };
+
+        // Emit versioned cancellation settlement event (version 1)
+        env.events().publish(
+            (symbol_short!("cancel"), 1u32),
+            settlement.clone(),
         );
 
-        Ok(())
+        Ok(settlement)
     }
 
     // ── Internal Helpers ─────────────────────────────────────────
