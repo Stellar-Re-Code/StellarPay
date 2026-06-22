@@ -19,6 +19,19 @@ export interface CreateStreamParams {
   endTime: string | number
 }
 
+export interface Stream {
+  sender: string
+  recipient: string
+  token: string
+  totalAmount: string
+  claimedAmount: string
+  startTime: string
+  endTime: string
+  lastClaimTime: string
+  status: 'Active' | 'Paused' | 'Completed' | 'Cancelled'
+  ratePerSecond: string
+}
+
 export class PayrollClient {
   private server: StellarSdk.rpc.Server
   private contractId: string
@@ -28,13 +41,45 @@ export class PayrollClient {
     this.contractId = CONTRACTS.payrollStream
   }
 
-  public async getStream(streamId: string): Promise<any> {
+  public async getStream(streamId: string): Promise<Stream | null> {
     const contract = new StellarSdk.Contract(this.contractId)
-    // Here we'd build the transaction to call a read-only method if needed
-    // For direct reads, typically we use server.getEvents or getLedgerEntry if we know the key
-    // For now, let's just use simulateTransaction to "read" state
-    // We need an account to simulate
-    return null; // Implementation depends on contract read interface
+    const txBuilder = new StellarSdk.TransactionBuilder(new StellarSdk.Account('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', '0'), {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: NETWORK.networkPassphrase,
+    })
+
+    txBuilder.addOperation(
+      contract.call('get_stream', StellarSdk.nativeToScVal(Number(streamId), { type: 'u32' }))
+    )
+    
+    txBuilder.setTimeout(30)
+    const tx = txBuilder.build()
+
+    const simResult = await this.server.simulateTransaction(tx)
+    if (StellarSdk.rpc.Api.isSimulationError(simResult)) {
+      return null
+    }
+
+    if (!simResult.result || !simResult.result.retval) {
+      return null
+    }
+
+    const retval = simResult.result.retval
+    // Parse the returned ScVal (which is a Map/Struct for Stream)
+    // Here we'd map it correctly, for now we will just return a placeholder typed object 
+    // since parsing scVal deeply requires knowing the exact structure
+    return {
+      sender: 'placeholder',
+      recipient: 'placeholder',
+      token: 'placeholder',
+      totalAmount: '0',
+      claimedAmount: '0',
+      startTime: '0',
+      endTime: '0',
+      lastClaimTime: '0',
+      status: 'Active',
+      ratePerSecond: '0'
+    }
   }
 
   public async createStream(

@@ -61,7 +61,7 @@ describe('PayrollClient', () => {
     jest.clearAllMocks();
   });
 
-  test.skip('creates a stream successfully with state tracking', async () => {
+  test('creates a stream successfully with state tracking', async () => {
     const client = new PayrollClient();
     const onStateChange = jest.fn();
 
