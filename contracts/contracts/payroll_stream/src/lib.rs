@@ -28,7 +28,7 @@ impl PayrollStreamContract {
         set_stream_count(&env, 0);
 
         env.events().publish(
-            (symbol_short!("init"),),
+            (symbol_short!("init"), 1u32),
             admin.clone(),
         );
 
@@ -69,7 +69,7 @@ impl PayrollStreamContract {
             id: stream_id,
             sender: sender.clone(),
             recipient: recipient.clone(),
-            token,
+            token: token.clone(),
             total_amount,
             claimed_amount: 0,
             start_time,
@@ -79,8 +79,8 @@ impl PayrollStreamContract {
             rate_per_second,
         };
 
-        // TODO: Transfer total_amount from sender to contract (contributor task SC-10)
-        // token::Client::new(&env, &token).transfer(&sender, &env.current_contract_address(), &total_amount);
+        // Transfer total_amount from sender to contract (contributor task SC-10)
+        token::Client::new(&env, &token).transfer(&sender, &env.current_contract_address(), &total_amount);
 
         set_stream(&env, stream_id, &stream);
         set_stream_count(&env, stream_id + 1);
@@ -88,7 +88,7 @@ impl PayrollStreamContract {
         add_recipient_stream(&env, &recipient, stream_id);
 
         env.events().publish(
-            (symbol_short!("s_create"), sender.clone()),
+            (symbol_short!("s_create"), 1u32, sender.clone()),
             stream_id,
         );
 
@@ -158,7 +158,7 @@ impl PayrollStreamContract {
         set_stream_count(&env, count);
 
         env.events().publish(
-            (symbol_short!("b_create"), sender.clone()),
+            (symbol_short!("b_create"), 1u32, sender.clone()),
             stream_ids.clone(),
         );
 
@@ -200,14 +200,14 @@ impl PayrollStreamContract {
             stream.status = StreamStatus::Completed;
         }
 
-        // TODO: Transfer claimable tokens to recipient (contributor task SC-11)
-        // token::Client::new(&env, &stream.token)
-        //     .transfer(&env.current_contract_address(), &recipient, &claimable);
+        // Transfer claimable tokens to recipient (contributor task SC-11)
+        token::Client::new(&env, &stream.token)
+            .transfer(&env.current_contract_address(), &recipient, &claimable);
 
         set_stream(&env, stream_id, &stream);
 
         env.events().publish(
-            (symbol_short!("claim"), recipient.clone()),
+            (symbol_short!("claim"), 1u32, recipient.clone()),
             claimable,
         );
 
@@ -257,7 +257,7 @@ impl PayrollStreamContract {
         set_stream(&env, stream_id, &stream);
 
         env.events().publish(
-            (symbol_short!("cancel"), sender.clone()),
+            (symbol_short!("cancel"), 1u32, sender.clone()),
             stream_id,
         );
 

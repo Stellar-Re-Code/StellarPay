@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, Vec, token};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger, testutils::Events, Address, Env, Vec, token};
 use types::StreamStatus;
 
 fn setup_env() -> (Env, Address, PayrollStreamContractClient<'static>) {
@@ -34,7 +34,10 @@ fn test_create_stream() {
     let (env, admin, client) = setup_env();
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_admin_client = create_token_contract(&env, &token_admin);
+    let token = token_admin_client.address.clone();
+    token_admin_client.mint(&sender, &100000);
 
     client.initialize(&admin);
 
@@ -62,7 +65,10 @@ fn test_create_stream() {
 fn test_create_batch_streams() {
     let (env, admin, client) = setup_env();
     let sender = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_admin_client = create_token_contract(&env, &token_admin);
+    let token = token_admin_client.address.clone();
+    token_admin_client.mint(&sender, &100000);
 
     client.initialize(&admin);
 
@@ -108,7 +114,10 @@ fn test_calculate_claimable() {
     let (env, admin, client) = setup_env();
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let token = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_admin_client = create_token_contract(&env, &token_admin);
+    let token = token_admin_client.address.clone();
+    token_admin_client.mint(&sender, &100000);
 
     client.initialize(&admin);
 
@@ -156,7 +165,6 @@ fn test_cancel_stream() {
     let token_client = create_token_client(&env, &token);
     
     token_admin_client.mint(&sender, &20000);
-    token_admin_client.mint(&client.address, &10000);
 
     client.initialize(&admin);
 
@@ -186,12 +194,8 @@ fn test_cancel_stream() {
     assert_eq!(token_client.balance(&recipient), 0);
     // Sender gets refund (assumes contract had funds)
     // Contract had 10000, refunded 10000 to sender.
-    // Sender started with 20000. 
-    // (Wait, create_stream didn't transfer FROM sender yet in code, but I simulated contract holding 10000)
-    // So sender balance should be 20000 + 10000 = 30000? 
-    // No, sender starts with 20000. Contract starts with 10000 (minted directly).
-    // Refund adds 10000 to sender. Total 30000.
-    assert_eq!(token_client.balance(&sender), 30000);
+    // Sender started with 20000, 10000 taken for stream, 10000 refunded -> 20000.
+    assert_eq!(token_client.balance(&sender), 20000);
 }
 
 #[test]
@@ -205,7 +209,7 @@ fn test_cancel_stream_midway() {
     let token = token_admin_client.address.clone();
     let token_client = create_token_client(&env, &token);
     
-    token_admin_client.mint(&client.address, &10000); // Simulate contract holding funds
+    token_admin_client.mint(&sender, &10000);
 
     client.initialize(&admin);
 
@@ -234,7 +238,7 @@ fn test_cancel_stream_midway() {
 
     // Recipient should have 5000
     assert_eq!(token_client.balance(&recipient), 5000);
-    // Sender should have refund of 5000
+    // Sender should have 0 (10000 minted, 10000 streamed, 5000 refunded -> wait, refund is 5000, so sender has 5000)
     assert_eq!(token_client.balance(&sender), 5000);
 }
 
@@ -249,7 +253,7 @@ fn test_cancel_stream_after_end() {
     let token = token_admin_client.address.clone();
     let token_client = create_token_client(&env, &token);
     
-    token_admin_client.mint(&client.address, &10000);
+    token_admin_client.mint(&sender, &10000);
 
     client.initialize(&admin);
 
@@ -277,4 +281,114 @@ fn test_cancel_stream_after_end() {
     assert_eq!(token_client.balance(&recipient), 10000);
     // Sender should have 0 refund
     assert_eq!(token_client.balance(&sender), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_storage_lifecycle_not_initialized_create_stream() {
+    let (env, _, client) = setup_env();
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_admin_client = create_token_contract(&env, &token_admin);
+    let token = token_admin_client.address.clone();
+    token_admin_client.mint(&sender, &100000);
+    client.create_stream(&sender, &recipient, &token, &10000_i128, &1000_u64, &2000_u64);
+}
+
+#[test]
+fn test_invariant_financial_settlement_on_cancel() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    
+    let token_admin = Address::generate(&env);
+    let token_admin_client = create_token_contract(&env, &token_admin);
+    let token = token_admin_client.address.clone();
+    let token_client = create_token_client(&env, &token);
+    
+    let total_amount = 20000_i128;
+    token_admin_client.mint(&sender, &total_amount);
+
+    client.initialize(&admin);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000;
+    });
+
+    let stream_id = client.create_stream(
+        &sender,
+        &recipient,
+        &token,
+        &total_amount,
+        &1000_u64,
+        &3000_u64,
+    );
+
+    // Advance to 25%
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1500;
+    });
+
+    // Claim 25%
+    let claimable = client.claim(&recipient, &stream_id);
+    assert_eq!(claimable, 5000);
+
+    // Cancel at 50%
+    env.ledger().with_mut(|li| {
+        li.timestamp = 2000;
+    });
+    client.cancel_stream(&sender, &stream_id);
+
+    let recipient_balance = token_client.balance(&recipient);
+    let sender_balance = token_client.balance(&sender);
+
+    // Recipient should have 25% (claimed) + 25% (cancelled) = 50% = 10000
+    assert_eq!(recipient_balance, 10000);
+    // Sender should have the remaining 50% = 10000
+    assert_eq!(sender_balance, 10000);
+
+    // Financial invariant: recipient balance + sender refund == total amount
+    assert_eq!(recipient_balance + sender_balance, total_amount);
+}
+
+#[test]
+fn test_event_emission_coverage() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_admin_client = create_token_contract(&env, &token_admin);
+    let token = token_admin_client.address.clone();
+    token_admin_client.mint(&sender, &100000);
+
+    client.initialize(&admin);
+    let mut total_events = 0;
+    total_events += env.events().all().len();
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000;
+    });
+
+    let stream_id = client.create_stream(
+        &sender,
+        &recipient,
+        &token,
+        &10000_i128,
+        &1000_u64,
+        &2000_u64,
+    );
+    total_events += env.events().all().len();
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1500;
+    });
+
+    let _ = client.claim(&recipient, &stream_id);
+    total_events += env.events().all().len();
+    
+    client.cancel_stream(&sender, &stream_id);
+    total_events += env.events().all().len();
+
+    assert!(total_events >= 4);
 }

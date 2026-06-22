@@ -147,7 +147,6 @@ fn test_quorum_not_reached() {
 
 #[test]
 fn test_proposal_expiration_live_status() {
-fn test_cancel_proposal() {
     let (env, admin, client) = setup_env();
     let member1 = Address::generate(&env);
     let token = Address::generate(&env);
@@ -188,10 +187,21 @@ fn test_cancel_proposal() {
 }
 
 #[test]
-fn test_finalize_auto_reject_after_grace_period() {
+fn test_cancel_proposal() {
     let (env, admin, client) = setup_env();
     let member1 = Address::generate(&env);
-    client.initialize(&admin, &members, &51, &(7 * 24 * 60 * 60));
+    let token = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let mut members = Vec::new(&env);
+    members.push_back(member1.clone());
+
+    let voting_duration = 1000u64;
+    let grace_period = 500u64;
+    client.initialize(&admin, &members, &51, &voting_duration, &grace_period);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000;
+    });
 
     let proposal_id = client.create_proposal(
         &member1,
@@ -236,29 +246,6 @@ fn test_cancel_proposal_unauthorized() {
         &symbol_short!("test"),
         &token,
         &1000_i128,
-        &recipient,
-    );
-
-    // Past grace period
-    env.ledger().with_mut(|li| {
-        li.timestamp = 1000 + voting_duration + grace_period + 1;
-    });
-
-    // Finalize should auto-reject even if it would have passed (if there were votes)
-    let status = client.finalize(&admin, &proposal_id);
-    assert_eq!(status, ProposalStatus::Rejected);
-    
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Rejected);
-    members.push_back(non_proposer.clone());
-
-    client.initialize(&admin, &members, &51, &(7 * 24 * 60 * 60));
-
-    let proposal_id = client.create_proposal(
-        &member1,
-        &symbol_short!("ops"),
-        &token,
-        &10_000_i128,
         &recipient,
     );
 
