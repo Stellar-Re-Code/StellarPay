@@ -1,6 +1,6 @@
 # StellarPay
 
-Decentralized Payroll, Vesting & Treasury Protocol on Stellar Soroban.
+Decentralized Payroll & Token Vesting Protocol on Stellar Soroban.
 
 ```
    _____ _            ____            ____        __
@@ -11,17 +11,17 @@ Decentralized Payroll, Vesting & Treasury Protocol on Stellar Soroban.
  |_____/|_|\_\___|_|\____/    /____/
 ```
 
-**StellarPay** is a protocol that enables startups, DAOs, and remote-first organizations to manage payroll, token vesting, and treasury operations entirely on-chain using Stellar Soroban smart contracts.
+**StellarPay** is a protocol that enables startups, DAOs, and remote-first organizations to manage payroll and token vesting entirely on-chain using Stellar Soroban smart contracts.
+
+> **⚠️ Module Boundary Notice:** Treasury and governance functionality has moved to [StellarSentinel](https://github.com/Stellar-Re-Code/StellarSentinel). See [docs/MODULE_BOUNDARY.md](docs/MODULE_BOUNDARY.md) for the disposition matrix and migration timeline. The `contracts/treasury/` and `contracts/governance/` crates remain in this repository temporarily during migration but are deprecated.
 
 ## 💡 The Idea
 
-Build an on-chain DAO operations protocol:
-- **Treasury**: Multi-signature vault with configurable approval thresholds
+Build an on-chain payroll and vesting protocol:
 - **Payroll Streaming**: Continuous token distribution, claimable in real-time
 - **Token Vesting**: Cliff + linear vesting for team, advisors, and investors
-- **Governance**: On-chain budget proposals with quorum-based approval voting
 
-This is not just payments — it is **programmable organizational finance**.
+Treasury (multi-sig vault) and governance (proposals + voting) are owned by [StellarSentinel](https://github.com/Stellar-Re-Code/StellarSentinel). See [docs/MODULE_BOUNDARY.md](docs/MODULE_BOUNDARY.md) for details.
 
 ## 🏗️ Architecture
 
@@ -30,23 +30,24 @@ graph TD
     Admin((Org Admin)) -->|Connect Wallet| UI[Next.js Dashboard]
     Employee((Employee)) -->|Claim Tokens| UI
     
-    UI -->|Invoke| T[Treasury Contract]
     UI -->|Invoke| P[Payroll Stream Contract]
     UI -->|Invoke| V[Vesting Contract]
-    UI -->|Invoke| G[Governance Contract]
     
     subgraph Stellar Soroban
-        T -->|Multi-sig| T_Store[Vault Storage]
         P -->|Stream| P_Store[Stream State]
         V -->|Vest| V_Store[Schedule State]
-        G -->|Vote| G_Store[Proposal State]
     end
     
+    subgraph StellarSentinel [StellarSentinel — Separate Repository]
+        T[Treasury Contract]
+        G[Governance Contract]
+    end
+
+    UI -.->|Redirect| StellarSentinel
+    
     subgraph Backend
-        Indexer[Event Indexer] -->|Poll| T
-        Indexer -->|Poll| P
+        Indexer[Event Indexer] -->|Poll| P
         Indexer -->|Poll| V
-        Indexer -->|Poll| G
         Indexer -->|Store| DB[(PostgreSQL)]
     end
     
@@ -71,17 +72,18 @@ graph TD
 StellarPay/
 ├── contracts/                        # Soroban workspace
 │   └── contracts/
-│       ├── treasury/                 # Multi-sig treasury (8 issues)
-│       ├── payroll_stream/           # Payment streaming (6 issues)
-│       ├── vesting/                  # Cliff + linear vesting (6 issues)
-│       └── governance/               # Proposals & voting (5 issues)
+│       ├── treasury/                 # ⚠️ DEPRECATED — migrating to StellarSentinel
+│       ├── payroll_stream/           # Payment streaming
+│       ├── vesting/                  # Cliff + linear vesting
+│       └── governance/              # ⚠️ DEPRECATED — migrating to StellarSentinel
 ├── frontend/                         # Next.js dashboard
 │   └── src/
-│       ├── app/                      # Pages (treasury, payroll, vesting, governance)
+│       ├── app/                      # Pages (payroll, vesting)
 │       ├── components/               # Reusable UI components
 │       ├── hooks/                    # Contract interaction hooks
 │       └── lib/                      # Network & wallet utilities
 ├── docs/                             # Issue trackers & guides
+│   ├── MODULE_BOUNDARY.md           # Treasury/governance disposition matrix
 │   ├── ISSUES-SMARTCONTRACT.md       # 25 smart contract issues
 │   ├── ISSUES-FRONTEND.md           # 25 frontend issues
 │   ├── ISSUES-BACKEND.md            # 10 backend/indexer issues
@@ -137,6 +139,7 @@ We have separated our task lists for better organization. Please refer to the sp
 ### Guides:
 - 📘 [Smart Contract Guide](docs/SMARTCONTRACT_GUIDE.md)
 - 🌐 [Frontend Integration Guide](docs/FRONTEND_GUIDE.md)
+- 📋 [Module Boundary: Treasury & Governance](docs/MODULE_BOUNDARY.md) — Deprecation path and migration plan
 
 ## 🤝 Contributing
 

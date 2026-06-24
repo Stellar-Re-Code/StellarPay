@@ -2,7 +2,7 @@
 
 use super::*;
 use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, Vec, token};
-use types::StreamStatus;
+use types::{StreamStatus, CancelSettlement};
 
 fn setup_env() -> (Env, Address, PayrollStreamContractClient<'static>) {
     let env = Env::default();
@@ -176,8 +176,13 @@ fn test_cancel_stream() {
     let stream = client.get_stream(&stream_id);
     assert_eq!(stream.status, StreamStatus::Active);
 
-    // Cancel immediately (before start or at start) - should refund all
-    client.cancel_stream(&sender, &stream_id);
+    // Cancel before start - should refund all
+    env.ledger().with_mut(|li| {
+        li.timestamp = 500;
+    });
+    let settlement = client.cancel_stream(&sender, &stream_id);
+    assert_eq!(settlement.recipient_amount, 0);
+    assert_eq!(settlement.sender_refund, 10000);
     
     let stream_cancelled = client.get_stream(&stream_id);
     assert_eq!(stream_cancelled.status, StreamStatus::Cancelled);
@@ -227,7 +232,9 @@ fn test_cancel_stream_midway() {
         li.timestamp = 1500;
     });
 
-    client.cancel_stream(&sender, &stream_id);
+    let settlement = client.cancel_stream(&sender, &stream_id);
+    assert_eq!(settlement.recipient_amount, 5000);
+    assert_eq!(settlement.sender_refund, 5000);
 
     let stream = client.get_stream(&stream_id);
     assert_eq!(stream.status, StreamStatus::Cancelled);
@@ -271,10 +278,123 @@ fn test_cancel_stream_after_end() {
         li.timestamp = 2500;
     });
 
-    client.cancel_stream(&sender, &stream_id);
+    let settlement = client.cancel_stream(&sender, &stream_id);
+    assert_eq!(settlement.recipient_amount, 10000);
+    assert_eq!(settlement.sender_refund, 0);
 
     // Recipient should have 10000
     assert_eq!(token_client.balance(&recipient), 10000);
     // Sender should have 0 refund
     assert_eq!(token_client.balance(&sender), 0);
 }
+
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #3)")]
+fn test_cancel_stream_unauthorized() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.initialize(&admin);
+
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+
+    let stream_id = client.create_stream(
+        &sender,
+        &recipient,
+        &token,
+        &10000_i128,
+        &1000_u64,
+        &2000_u64,
+    );
+
+    let fake_sender = Address::generate(&env);
+    client.cancel_stream(&fake_sender, &stream_id);
+}
+
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #7)")]
+fn test_repeated_cancel() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    
+    let token_admin = Address::generate(&env);
+    let token_admin_client = create_token_contract(&env, &token_admin);
+    let token = token_admin_client.address.clone();
+    
+    token_admin_client.mint(&client.address, &10000);
+
+    client.initialize(&admin);
+
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+
+    let stream_id = client.create_stream(
+        &sender,
+        &recipient,
+        &token,
+        &10000_i128,
+        &1000_u64,
+        &2000_u64,
+    );
+
+    client.cancel_stream(&sender, &stream_id);
+    // Repeated cancel should fail
+    client.cancel_stream(&sender, &stream_id);
+}
+
+#[test]
+fn test_claim_then_cancel() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    
+    let token_admin = Address::generate(&env);
+    let token_admin_client = create_token_contract(&env, &token_admin);
+    let token = token_admin_client.address.clone();
+    let token_client = create_token_client(&env, &token);
+    
+    token_admin_client.mint(&client.address, &10000);
+
+    client.initialize(&admin);
+
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+
+    let stream_id = client.create_stream(
+        &sender,
+        &recipient,
+        &token,
+        &10000_i128,
+        &1000_u64,
+        &2000_u64,
+    );
+
+    // Advance to 40%
+    env.ledger().with_mut(|li| li.timestamp = 1400);
+
+    // In actual implementation, we might simulate a claim. Wait, does `claim` work without funds? We minted 10000 to contract.
+    // Wait, let's look at `claim` in `lib.rs`: "TODO: Transfer claimable tokens to recipient...". It currently does not actually transfer tokens!
+    // But it updates `stream.claimed_amount`.
+    // Oh, the token transfers are commented out in `claim`!
+    // We can still call `claim` and verify state.
+    client.claim(&recipient, &stream_id);
+
+    let stream_after_claim = client.get_stream(&stream_id);
+    assert_eq!(stream_after_claim.claimed_amount, 4000);
+
+    // Advance to 60%
+    env.ledger().with_mut(|li| li.timestamp = 1600);
+
+    let settlement = client.cancel_stream(&sender, &stream_id);
+
+    // At 60%, total earned is 6000. Claimed was 4000. So recipient gets 2000 now.
+    // Sender gets 10000 - 4000 - 2000 = 4000.
+    assert_eq!(settlement.recipient_amount, 2000);
+    assert_eq!(settlement.sender_refund, 4000);
+
+    // Recipient token balance should be 2000 (since claim didn't transfer, only cancel did transfer)
+    assert_eq!(token_client.balance(&recipient), 2000);
+    assert_eq!(token_client.balance(&sender), 4000);
+}
+

@@ -16,19 +16,29 @@ try {
 }
 
 export const NETWORK = {
-  name: 'Network',
+  name: 'Testnet',
   networkPassphrase: env.networkPassphrase || 'Test SDF Network ; September 2015',
   rpcUrl: env.rpcUrl || 'https://soroban-testnet.stellar.org',
   horizonUrl: 'https://horizon-testnet.stellar.org',
-} as const
+} as const;
 
+/**
+ * Contract IDs — these will be populated after deployment.
+ * TODO: Add deployed contract IDs (contributor task FE-4)
+ *
+ * ⚠️ treasury and governance are deprecated in StellarPay.
+ * These contracts are migrating to StellarSentinel.
+ * See docs/MODULE_BOUNDARY.md for the migration plan.
+ */
 export const CONTRACTS = {
-  treasury: '',
-  payrollStream: env.payrollContractId || '',
-  vesting: '',
-  governance: '',
-} as const
+  /** @deprecated Migrating to StellarSentinel — see docs/MODULE_BOUNDARY.md */
+  treasury: "",
+  payrollStream: env.payrollContractId || "",
+  vesting: "",
+  /** @deprecated Migrating to StellarSentinel — see docs/MODULE_BOUNDARY.md */
+  governance: "",
+} as const;
 
 export function getSorobanServer() {
-  return new StellarSdk.rpc.Server(NETWORK.rpcUrl, { allowHttp: NETWORK.rpcUrl.startsWith('http://') })
+  return new StellarSdk.rpc.Server(NETWORK.rpcUrl, { allowHttp: NETWORK.rpcUrl.startsWith('http://') });
 }

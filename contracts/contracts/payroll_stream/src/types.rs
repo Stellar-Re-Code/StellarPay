@@ -64,3 +64,14 @@ pub struct CreateStreamParams {
     pub start_time: u64,
     pub end_time: u64,
 }
+
+/// Settlement details upon cancellation.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CancelSettlement {
+    pub stream_id: u32,
+    pub recipient: Address,
+    pub sender: Address,
+    pub recipient_amount: i128,
+    pub sender_refund: i128,
+}

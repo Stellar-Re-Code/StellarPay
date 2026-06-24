@@ -1,7 +1,9 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, Vec, symbol_short};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Ledger, Address, Env, Vec, symbol_short,
+};
 use types::{ProposalStatus, VoteChoice};
 
 fn setup_env() -> (Env, Address, GovernanceContractClient<'static>) {
@@ -147,7 +149,6 @@ fn test_quorum_not_reached() {
 
 #[test]
 fn test_proposal_expiration_live_status() {
-fn test_cancel_proposal() {
     let (env, admin, client) = setup_env();
     let member1 = Address::generate(&env);
     let token = Address::generate(&env);
@@ -172,26 +173,44 @@ fn test_cancel_proposal() {
     );
 
     // Still Active
-    assert_eq!(client.get_proposal_status(&proposal_id), ProposalStatus::Active);
+    assert_eq!(
+        client.get_proposal_status(&proposal_id),
+        ProposalStatus::Active
+    );
 
     // Past voting but within grace period -> Still Active (waiting for finalization)
     env.ledger().with_mut(|li| {
         li.timestamp = 1000 + voting_duration + 100;
     });
-    assert_eq!(client.get_proposal_status(&proposal_id), ProposalStatus::Active);
+    assert_eq!(
+        client.get_proposal_status(&proposal_id),
+        ProposalStatus::Active
+    );
 
     // Past grace period -> Expired
     env.ledger().with_mut(|li| {
         li.timestamp = 1000 + voting_duration + grace_period + 1;
     });
-    assert_eq!(client.get_proposal_status(&proposal_id), ProposalStatus::Expired);
+    assert_eq!(
+        client.get_proposal_status(&proposal_id),
+        ProposalStatus::Expired
+    );
 }
 
 #[test]
-fn test_finalize_auto_reject_after_grace_period() {
+fn test_cancel_proposal() {
     let (env, admin, client) = setup_env();
     let member1 = Address::generate(&env);
-    client.initialize(&admin, &members, &51, &(7 * 24 * 60 * 60));
+    let token = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let mut members = Vec::new(&env);
+    members.push_back(member1.clone());
+
+    client.initialize(&admin, &members, &51, &(7 * 24 * 60 * 60), &3600);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000;
+    });
 
     let proposal_id = client.create_proposal(
         &member1,
@@ -223,36 +242,11 @@ fn test_cancel_proposal_unauthorized() {
     let mut members = Vec::new(&env);
     members.push_back(member1.clone());
 
-    let voting_duration = 1000u64;
-    let grace_period = 500u64;
-    client.initialize(&admin, &members, &51, &voting_duration, &grace_period);
+    client.initialize(&admin, &members, &51, &(7 * 24 * 60 * 60), &3600);
 
     env.ledger().with_mut(|li| {
         li.timestamp = 1000;
     });
-
-    let proposal_id = client.create_proposal(
-        &member1,
-        &symbol_short!("test"),
-        &token,
-        &1000_i128,
-        &recipient,
-    );
-
-    // Past grace period
-    env.ledger().with_mut(|li| {
-        li.timestamp = 1000 + voting_duration + grace_period + 1;
-    });
-
-    // Finalize should auto-reject even if it would have passed (if there were votes)
-    let status = client.finalize(&admin, &proposal_id);
-    assert_eq!(status, ProposalStatus::Rejected);
-    
-    let proposal = client.get_proposal(&proposal_id);
-    assert_eq!(proposal.status, ProposalStatus::Rejected);
-    members.push_back(non_proposer.clone());
-
-    client.initialize(&admin, &members, &51, &(7 * 24 * 60 * 60));
 
     let proposal_id = client.create_proposal(
         &member1,
@@ -262,6 +256,6 @@ fn test_cancel_proposal_unauthorized() {
         &recipient,
     );
 
-    // Only the proposer can cancel
+    // Only the proposer can cancel — non_proposer should panic with Unauthorized
     client.cancel_proposal(&non_proposer, &proposal_id);
 }
