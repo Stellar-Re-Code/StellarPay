@@ -1,7 +1,9 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, Vec, symbol_short};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Ledger, Address, Env, Vec, symbol_short,
+};
 use types::{ProposalStatus, VoteChoice};
 
 fn setup_env() -> (Env, Address, GovernanceContractClient<'static>) {
@@ -171,19 +173,28 @@ fn test_proposal_expiration_live_status() {
     );
 
     // Still Active
-    assert_eq!(client.get_proposal_status(&proposal_id), ProposalStatus::Active);
+    assert_eq!(
+        client.get_proposal_status(&proposal_id),
+        ProposalStatus::Active
+    );
 
     // Past voting but within grace period -> Still Active (waiting for finalization)
     env.ledger().with_mut(|li| {
         li.timestamp = 1000 + voting_duration + 100;
     });
-    assert_eq!(client.get_proposal_status(&proposal_id), ProposalStatus::Active);
+    assert_eq!(
+        client.get_proposal_status(&proposal_id),
+        ProposalStatus::Active
+    );
 
     // Past grace period -> Expired
     env.ledger().with_mut(|li| {
         li.timestamp = 1000 + voting_duration + grace_period + 1;
     });
-    assert_eq!(client.get_proposal_status(&proposal_id), ProposalStatus::Expired);
+    assert_eq!(
+        client.get_proposal_status(&proposal_id),
+        ProposalStatus::Expired
+    );
 }
 
 #[test]
@@ -233,9 +244,7 @@ fn test_cancel_proposal_unauthorized() {
     let mut members = Vec::new(&env);
     members.push_back(member1.clone());
 
-    let voting_duration = 1000u64;
-    let grace_period = 500u64;
-    client.initialize(&admin, &members, &51, &voting_duration, &grace_period);
+    client.initialize(&admin, &members, &51, &(7 * 24 * 60 * 60), &3600);
 
     env.ledger().with_mut(|li| {
         li.timestamp = 1000;
@@ -243,12 +252,12 @@ fn test_cancel_proposal_unauthorized() {
 
     let proposal_id = client.create_proposal(
         &member1,
-        &symbol_short!("test"),
+        &symbol_short!("ops"),
         &token,
-        &1000_i128,
+        &10_000_i128,
         &recipient,
     );
 
-    // Only the proposer can cancel
+    // Only the proposer can cancel — non_proposer should panic with Unauthorized
     client.cancel_proposal(&non_proposer, &proposal_id);
 }

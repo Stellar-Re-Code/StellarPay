@@ -28,10 +28,10 @@
                   "u32": 51
                 },
                 {
-                  "u64": 1000
+                  "u64": 604800
                 },
                 {
-                  "u64": 500
+                  "u64": 3600
                 }
               ]
             }
@@ -53,7 +53,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                 },
                 {
-                  "symbol": "test"
+                  "symbol": "ops"
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
@@ -61,7 +61,7 @@
                 {
                   "i128": {
                     "hi": 0,
-                    "lo": 1000
+                    "lo": 10000
                   }
                 },
                 {
@@ -138,7 +138,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 1000
+                          "lo": 10000
                         }
                       }
                     },
@@ -147,7 +147,7 @@
                         "symbol": "end_time"
                       },
                       "val": {
-                        "u64": 2000
+                        "u64": 605800
                       }
                     },
                     {
@@ -207,7 +207,7 @@
                         "symbol": "title"
                       },
                       "val": {
-                        "symbol": "test"
+                        "symbol": "ops"
                       }
                     },
                     {
@@ -287,7 +287,7 @@
                           ]
                         },
                         "val": {
-                          "u64": 500
+                          "u64": 3600
                         }
                       },
                       {
@@ -339,7 +339,7 @@
                           ]
                         },
                         "val": {
-                          "u64": 1000
+                          "u64": 604800
                         }
                       }
                     ]
