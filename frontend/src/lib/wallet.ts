@@ -1,97 +1,122 @@
 /**
  * Freighter wallet utilities.
- * Contributors: see FE-2 for full implementation.
+ *
+ * Implemented against `@stellar/freighter-api` v2.0.0, whose public surface is
+ * the legacy promise API: `isConnected()`, `isAllowed()`, `setAllowed()`,
+ * `requestAccess()`, `getPublicKey()`, `getNetworkDetails()` and
+ * `signTransaction()`. These resolve to plain values and reject (throw) on
+ * failure. We additionally tolerate the newer object-shaped responses
+ * (`{ address }` / `{ isConnected }` / `{ error }`) so the same code keeps
+ * working if the extension/library is upgraded.
  */
 
-import {
-  isConnected,
-  isAllowed,
-  setAllowed,
-  getAddress,
-  signTransaction as freighterSignTransaction,
-  getNetworkDetails,
-  getPublicKey
-} from '@stellar/freighter-api'
+import freighterApi from '@stellar/freighter-api'
+import { NETWORK } from './network'
 
+const FREIGHTER_NOT_INSTALLED =
+  'Freighter wallet was not detected. Install the Freighter browser extension and reload to continue.'
+
+/** Normalize a possibly-object response into a plain string (address). */
+function asAddress(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    if (obj.error) {
+      throw new Error(String(obj.error))
+    }
+    if (typeof obj.address === 'string') return obj.address
+    if (typeof obj.publicKey === 'string') return obj.publicKey
+  }
+  throw new Error('Could not read wallet address from Freighter.')
+}
+
+/** Normalize a possibly-object boolean response. */
+function asBool(value: unknown): boolean {
+  if (typeof value === 'boolean') return value
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    if (typeof obj.isConnected === 'boolean') return obj.isConnected
+    if (typeof obj.isAllowed === 'boolean') return obj.isAllowed
+  }
+  return Boolean(value)
+}
+
+/**
+ * Check whether the Freighter extension is installed / reachable.
+ * `isConnected()` resolves true only when the extension is present.
+ */
 export async function isFreighterInstalled(): Promise<boolean> {
-  return await isConnected()
+  try {
+    return asBool(await freighterApi.isConnected())
+  } catch {
+    return false
+  }
 }
 
-export async function connectWallet(): Promise<string | null> {
-  if (!(await isConnected())) {
-    throw new Error('Freighter is not installed')
+/** Whether this dApp is already authorized to read the user's account. */
+export async function isAllowed(): Promise<boolean> {
+  try {
+    return asBool(await freighterApi.isAllowed())
+  } catch {
+    return false
   }
-
-  let allowed = await isAllowed()
-  if (!allowed) {
-    await setAllowed()
-    allowed = await isAllowed()
-  }
-
-  if (allowed) {
-    const address = await getAddress()
-    return address
-  }
-
-  return null
 }
 
-export function disconnectWallet(): void {
-  // Freighter doesn't have an explicit disconnect API.
-  // This function is a placeholder for local reset.
+/** Request that the user authorize this dApp (shows the Freighter prompt). */
+export async function setAllowed(): Promise<boolean> {
+  return asBool(await freighterApi.setAllowed())
 }
 
-export type WalletStateChangeHandler = (address: string | null, network: string | null) => void;
-
-export function watchWalletChanges(callback: WalletStateChangeHandler): () => void {
-  let intervalId: any;
-  let lastAddress: string | null = null;
-  let lastNetwork: string | null = null;
-
-  if (typeof window !== 'undefined') {
-    intervalId = setInterval(async () => {
-      try {
-        if (await isConnected() && await isAllowed()) {
-          const address = await getPublicKey();
-          const networkDetails = await getNetworkDetails();
-          const network = networkDetails.network;
-
-          if (address !== lastAddress || network !== lastNetwork) {
-            lastAddress = address;
-            lastNetwork = network;
-            callback(address, network);
-          }
-        } else {
-          if (lastAddress !== null || lastNetwork !== null) {
-            lastAddress = null;
-            lastNetwork = null;
-            callback(null, null);
-          }
-        }
-      } catch (e) {
-        // Ignore errors during polling
-      }
-    }, 2000);
+/**
+ * Connect to Freighter and return the user's public key.
+ * Throws a clear error if Freighter is not installed.
+ */
+export async function connectWallet(): Promise<string> {
+  if (!(await isFreighterInstalled())) {
+    throw new Error(FREIGHTER_NOT_INSTALLED)
   }
-
-  return () => {
-    if (intervalId) clearInterval(intervalId);
-  };
+  const result = await freighterApi.requestAccess()
+  return asAddress(result)
 }
 
-export async function signTransaction(xdr: string, network: string): Promise<string> {
-  if (!(await isConnected())) {
-    throw new Error('Freighter is not installed')
+/** Read the currently-connected public key without prompting. */
+export async function getAddress(): Promise<string> {
+  if (!(await isFreighterInstalled())) {
+    throw new Error(FREIGHTER_NOT_INSTALLED)
   }
+  return asAddress(await freighterApi.getPublicKey())
+}
 
-  const networkDetails = await getNetworkDetails()
-  if (networkDetails.network !== network) {
-    throw new Error(`Freighter is set to ${networkDetails.network}, but ${network} is expected.`)
+/** Read the network Freighter is currently pointed at. */
+export async function getNetworkDetails(): Promise<{
+  network: string
+  networkPassphrase: string
+}> {
+  const details = await freighterApi.getNetworkDetails()
+  return {
+    network: details.network,
+    networkPassphrase: details.networkPassphrase,
   }
+}
 
-  const result = await freighterSignTransaction(xdr, { network })
-  if (result.error) {
-    throw new Error(result.error)
+/**
+ * Sign a transaction XDR with Freighter and return the signed XDR.
+ * Defaults to the configured testnet passphrase.
+ */
+export async function signTransaction(
+  xdr: string,
+  networkPassphrase: string = NETWORK.networkPassphrase,
+): Promise<string> {
+  if (!(await isFreighterInstalled())) {
+    throw new Error(FREIGHTER_NOT_INSTALLED)
   }
-  return result
+  const signed = await freighterApi.signTransaction(xdr, { networkPassphrase })
+  if (typeof signed === 'string') return signed
+  if (signed && typeof signed === 'object') {
+    const obj = signed as Record<string, unknown>
+    if (obj.error) throw new Error(String(obj.error))
+    if (typeof obj.signedTxXdr === 'string') return obj.signedTxXdr
+    if (typeof obj.signedXDR === 'string') return obj.signedXDR
+  }
+  throw new Error('Freighter did not return a signed transaction.')
 }
