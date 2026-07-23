@@ -144,3 +144,83 @@ fn setup() -> (
     let (token_addr, token_admin_client) = create_token(&env, &token_admin);
     (env, admin, sender, recipient, token_admin_client, client, token_addr)
 }
+
+/// Assert conservation: contract + recipient == total_amount at all times.
+fn assert_conservation(total: i128, contract_bal: i128, recipient_bal: i128) {
+    assert_eq!(
+        contract_bal + recipient_bal,
+        total,
+        "Conservation violated: contract={contract_bal} recipient={recipient_bal} total={total}",
+    );
+}
+
+fn assert_non_negative(val: i128, label: &str) {
+    assert!(val >= 0, "Negative balance: {label}={val}");
+}
+
+fn tok_bal(env: &Env, tok: &Address, addr: &Address) -> i128 {
+    token::Client::new(env, tok).balance(addr)
+}
+
+// ── Conservation: cancel before start ──────────────────────────
+
+#[test]
+fn prop_conservation_cancel_before_start() {
+    let mut rng = Rng::new(0xDEAD_BEEF);
+    for _ in 0..20 {
+        let (env, admin, sender, recipient, tok_admin, client, tok) = setup();
+        let total = rng.range_i128(1_000, 500_000);
+        tok_admin.mint(&sender, &total);
+        client.initialize(&admin);
+
+        let start = rng.range_u64(1000, 5000);
+        let duration = rng.range_u64(100, 2000);
+        let end = start + duration;
+
+        env.ledger().with_mut(|li| li.timestamp = start);
+        let stream_id =
+            client.create_stream(&sender, &recipient, &tok, &total, &start, &end);
+
+        env.ledger().with_mut(|li| li.timestamp = start.saturating_sub(1));
+        let settlement = client.cancel_stream(&sender, &stream_id);
+
+        let cb = tok_bal(&env, &tok, &env.current_contract_address());
+        let rb = tok_bal(&env, &tok, &recipient);
+        assert_conservation(total, cb, rb);
+        assert_eq!(settlement.recipient_amount + settlement.sender_refund, total);
+        assert_non_negative(cb, "contract");
+        assert_non_negative(rb, "recipient");
+    }
+}
+
+// ── Conservation: cancel midway ────────────────────────────────
+
+#[test]
+fn prop_conservation_cancel_midway() {
+    let mut rng = Rng::new(0xCAFE_BABE);
+    for _ in 0..20 {
+        let (env, admin, sender, recipient, tok_admin, client, tok) = setup();
+        let total = rng.range_i128(1_000, 500_000);
+        tok_admin.mint(&sender, &total);
+        client.initialize(&admin);
+
+        let start = rng.range_u64(1000, 5000);
+        let duration = rng.range_u64(100, 2000);
+        let end = start + duration;
+
+        env.ledger().with_mut(|li| li.timestamp = start);
+        let stream_id =
+            client.create_stream(&sender, &recipient, &tok, &total, &start, &end);
+
+        let cancel_time = start + duration / 2;
+        env.ledger().with_mut(|li| li.timestamp = cancel_time);
+        let settlement = client.cancel_stream(&sender, &stream_id);
+
+        let cb = tok_bal(&env, &tok, &env.current_contract_address());
+        let rb = tok_bal(&env, &tok, &recipient);
+        assert_conservation(total, cb, rb);
+        assert_eq!(settlement.recipient_amount + settlement.sender_refund, total);
+        assert_non_negative(cb, "contract");
+        assert_non_negative(rb, "recipient");
+    }
+}
