@@ -113,7 +113,7 @@ fn prop_conservation_revoke() {
         let revoke_time = start + total_duration / 2;
         env.ledger().with_mut(|li| li.timestamp = revoke_time);
 
-        let vested = client.get_progress(&schedule_id).vested_amount;
+        let _vested = client.get_progress(&schedule_id).vested_amount;
         let unvested = client.revoke(&grantor, &schedule_id);
 
         // Conservation: vested (now capped at total_amount) + unvested == total
@@ -169,7 +169,7 @@ fn prop_conservation_claim_then_revoke() {
         // Claim at 50%
         let claim_time = start + total_duration / 2;
         env.ledger().with_mut(|li| li.timestamp = claim_time);
-        let claimed = client.claim(&beneficiary, &schedule_id);
+        let _claimed = client.claim(&beneficiary, &schedule_id);
 
         // Revoke at 75%
         let revoke_time = start + (total_duration * 3) / 4;

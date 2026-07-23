@@ -74,10 +74,6 @@ fn tok_balance(e: &Env, tok: &Address, addr: &Address) -> i128 {
     create_token_client(e, tok).balance(addr)
 }
 
-fn assert_conservation(total: i128, cb: i128, rb: i128) {
-    assert_eq!(cb + rb, total, "Conservation violated: {cb} + {rb} != {total}");
-}
-
 /// Verify the full-stream conservation invariant:
 ///   escrow + claimed_out + refunded_out == total_amount
 /// After cancel, escrow should be 0 and the settlement amounts should sum to total.
