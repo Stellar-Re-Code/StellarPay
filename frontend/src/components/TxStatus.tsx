@@ -6,12 +6,24 @@
  */
 
 import { CheckCircle2, Loader2, XCircle, ExternalLink } from 'lucide-react'
-import type { TxState } from '@/hooks/usePayrollStream'
 import { explorerTxUrl } from '@/lib/format'
 
 const SPINNER_PHASES = new Set(['simulating', 'awaiting-signature', 'submitting', 'confirming'])
 
-export default function TxStatus({ state, context }: { state: TxState; context: string }) {
+/**
+ * Structural shape shared by usePayrollStream's and useVesting's TxState —
+ * kept generic here (rather than importing one hook's type) since both
+ * hooks produce an identical shape and this component has no other
+ * per-contract dependency.
+ */
+export interface TxStatusState {
+  phase: string
+  message: string
+  hash: string | null
+  context: string | null
+}
+
+export default function TxStatus({ state, context }: { state: TxStatusState; context: string }) {
   // Only render for the matching operation context.
   if (state.phase === 'idle' || state.context !== context) return null
 
