@@ -224,3 +224,93 @@ fn prop_conservation_cancel_midway() {
         assert_non_negative(rb, "recipient");
     }
 }
+
+// ── Conservation: claim then cancel ────────────────────────────
+
+#[test]
+fn prop_conservation_claim_then_cancel() {
+    let mut rng = Rng::new(0xFACE_1234);
+    for _ in 0..20 {
+        let (env, admin, sender, recipient, tok_admin, client, tok) = setup();
+        let total = rng.range_i128(1_000, 500_000);
+        tok_admin.mint(&sender, &total);
+        client.initialize(&admin);
+
+        let start = rng.range_u64(1000, 5000);
+        let duration = rng.range_u64(200, 2000);
+        let end = start + duration;
+
+        env.ledger().with_mut(|li| li.timestamp = start);
+        let stream_id =
+            client.create_stream(&sender, &recipient, &tok, &total, &start, &end);
+
+        // Claim midway
+        let claim_time = start + duration / 2;
+        env.ledger().with_mut(|li| li.timestamp = claim_time);
+        let _ = client.claim(&recipient, &stream_id);
+
+        // Cancel at 75%
+        let cancel_time = start + (duration * 3) / 4;
+        env.ledger().with_mut(|li| li.timestamp = cancel_time);
+        let settlement = client.cancel_stream(&sender, &stream_id);
+
+        let cb = tok_bal(&env, &tok, &env.current_contract_address());
+        let rb = tok_bal(&env, &tok, &recipient);
+        assert_conservation(total, cb, rb);
+        assert_eq!(
+            settlement.recipient_amount + settlement.sender_refund,
+            total - (total * (duration / 2) / duration),
+        );
+        assert_non_negative(cb, "contract");
+        assert_non_negative(rb, "recipient");
+    }
+}
+
+// ── Conservation: multiple claims then cancel ──────────────────
+
+#[test]
+fn prop_conservation_multi_claim_then_cancel() {
+    let mut rng = Rng::new(0x1234_5678);
+    for _ in 0..20 {
+        let (env, admin, sender, recipient, tok_admin, client, tok) = setup();
+        let total = rng.range_i128(2_000, 500_000);
+        tok_admin.mint(&sender, &total);
+        client.initialize(&admin);
+
+        let start = rng.range_u64(1000, 3000);
+        let duration = rng.range_u64(400, 2000);
+        let end = start + duration;
+
+        env.ledger().with_mut(|li| li.timestamp = start);
+        let stream_id =
+            client.create_stream(&sender, &recipient, &tok, &total, &start, &end);
+
+        let t1 = start + duration / 4;
+        env.ledger().with_mut(|li| li.timestamp = t1);
+        let c1 = client.claim(&recipient, &stream_id);
+
+        let t2 = start + duration / 2;
+        env.ledger().with_mut(|li| li.timestamp = t2);
+        let c2 = client.claim(&recipient, &stream_id);
+
+        let t3 = start + (duration * 3) / 4;
+        env.ledger().with_mut(|li| li.timestamp = t3);
+        let c3 = client.claim(&recipient, &stream_id);
+
+        let total_claimed = c1 + c2 + c3;
+
+        let cancel_time = t3 + 1;
+        env.ledger().with_mut(|li| li.timestamp = cancel_time);
+        let settlement = client.cancel_stream(&sender, &stream_id);
+
+        let cb = tok_bal(&env, &tok, &env.current_contract_address());
+        let rb = tok_bal(&env, &tok, &recipient);
+        assert_conservation(total, cb, rb);
+        assert_eq!(
+            settlement.recipient_amount + settlement.sender_refund,
+            total - total_claimed,
+        );
+        assert_non_negative(cb, "contract");
+        assert_non_negative(rb, "recipient");
+    }
+}
