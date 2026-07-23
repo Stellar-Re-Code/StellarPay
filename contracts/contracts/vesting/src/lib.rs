@@ -311,3 +311,4 @@ impl VestingContract {
 
 mod test;
 mod test_sentinel_auth;
+mod test_properties;
