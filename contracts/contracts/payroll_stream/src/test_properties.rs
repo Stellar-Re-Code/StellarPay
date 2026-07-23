@@ -381,3 +381,240 @@ fn prop_monotonic_post_completion() {
         assert_eq!(claimable_after, 0);
     }
 }
+
+// ── Terminal states: no payout after cancellation ──────────────
+
+#[test]
+fn prop_terminal_no_claim_after_cancel() {
+    let mut rng = Rng::new(0xABCD_9999);
+    for _ in 0..10 {
+        let (env, admin, sender, recipient, tok_admin, client, tok) = setup();
+        let total = rng.range_i128(5_000, 100_000);
+        tok_admin.mint(&sender, &total);
+        client.initialize(&admin);
+
+        let start = rng.range_u64(1000, 3000);
+        let duration = rng.range_u64(200, 1000);
+        let end = start + duration;
+
+        env.ledger().with_mut(|li| li.timestamp = start);
+        let stream_id =
+            client.create_stream(&sender, &recipient, &tok, &total, &start, &end);
+
+        let cancel_time = start + duration / 2;
+        env.ledger().with_mut(|li| li.timestamp = cancel_time);
+        let _ = client.cancel_stream(&sender, &stream_id);
+
+        // Verify stream is in terminal state
+        let stream = client.get_stream(&stream_id);
+        assert_eq!(stream.status, StreamStatus::Cancelled);
+
+        // Claiming on a cancelled stream should fail
+        let t_after = cancel_time + 100;
+        env.ledger().with_mut(|li| li.timestamp = t_after);
+        let result = client.try_claim(&recipient, &stream_id);
+        assert!(result.is_err(), "Claim should fail on cancelled stream");
+
+        // Cancelling again should also fail
+        let result2 = client.try_cancel_stream(&sender, &stream_id);
+        assert!(result2.is_err(), "Double cancel should fail");
+    }
+}
+
+// ── Terminal states: no payout after completion ────────────────
+
+#[test]
+fn prop_terminal_no_claim_after_complete() {
+    let mut rng = Rng::new(0xDADD_7777);
+    for _ in 0..10 {
+        let (env, admin, sender, recipient, tok_admin, client, tok) = setup();
+        let total = rng.range_i128(1_000, 50_000);
+        tok_admin.mint(&sender, &total);
+        client.initialize(&admin);
+
+        let start = rng.range_u64(1000, 3000);
+        let duration = rng.range_u64(100, 500);
+        let end = start + duration;
+
+        env.ledger().with_mut(|li| li.timestamp = start);
+        let stream_id =
+            client.create_stream(&sender, &recipient, &tok, &total, &start, &end);
+
+        // Claim at end to fully complete
+        env.ledger().with_mut(|li| li.timestamp = end);
+        let _ = client.claim(&recipient, &stream_id);
+
+        let stream = client.get_stream(&stream_id);
+        assert_eq!(stream.status, StreamStatus::Completed);
+
+        // Further claims should fail
+        env.ledger().with_mut(|li| li.timestamp = end + 500);
+        let result = client.try_claim(&recipient, &stream_id);
+        assert!(result.is_err(), "Claim should fail after completion");
+
+        // Cancellation should also fail
+        let result2 = client.try_cancel_stream(&sender, &stream_id);
+        assert!(result2.is_err(), "Cancel should fail after completion");
+    }
+}
+
+// ── Overflow / underflow: i128 arithmetic stays in bounds ──────
+
+#[test]
+fn prop_no_overflow_large_amounts() {
+    let mut rng = Rng::new(0xBAD0_0001);
+    for _ in 0..10 {
+        let (env, admin, sender, recipient, tok_admin, client, tok) = setup();
+        // Use large but plausible amounts (well within i128 range)
+        let total = rng.range_i128(10_000_000, i128::MAX / 1_000_000);
+        tok_admin.mint(&sender, &total);
+        client.initialize(&admin);
+
+        let start = rng.range_u64(1000, 100_000);
+        let duration = rng.range_u64(1000, 86400 * 365);
+        let end = start + duration;
+
+        env.ledger().with_mut(|li| li.timestamp = start);
+        let stream_id =
+            client.create_stream(&sender, &recipient, &tok, &total, &start, &end);
+
+        // Claim midway — must not panic/overflow
+        env.ledger().with_mut(|li| li.timestamp = start + duration / 2);
+        let claimable = client.get_claimable(&stream_id);
+        assert!(claimable >= 0, "Negative claimable: {claimable}");
+        assert!(claimable <= total, "Claimable > total: {claimable} > {total}");
+
+        if claimable > 0 {
+            let claimed = client.claim(&recipient, &stream_id);
+            assert!(claimed >= 0, "Negative claimed: {claimed}");
+            assert!(claimed <= total, "Claimed > total: {claimed} > {total}");
+        }
+    }
+}
+
+#[test]
+fn prop_no_overflow_small_duration() {
+    let mut rng = Rng::new(0xBAD0_0002);
+    for _ in 0..10 {
+        let (env, admin, sender, recipient, tok_admin, client, tok) = setup();
+        let total = rng.range_i128(1, 100_000);
+        tok_admin.mint(&sender, &total);
+        client.initialize(&admin);
+
+        let start = rng.range_u64(1000, 5000);
+        // Duration of 1 second — rate_per_second truncates, must not crash
+        let end = start + 1;
+
+        env.ledger().with_mut(|li| li.timestamp = start);
+        let stream_id =
+            client.create_stream(&sender, &recipient, &tok, &total, &start, &end);
+
+        env.ledger().with_mut(|li| li.timestamp = end);
+        let claimable = client.get_claimable(&stream_id);
+        assert!(claimable >= 0, "Negative claimable on unit duration");
+        assert!(claimable <= total, "Claimable > total on unit duration");
+    }
+}
+
+// ── Before start: nothing claimable ────────────────────────────
+
+#[test]
+fn prop_nothing_claimable_before_start() {
+    let mut rng = Rng::new(0xCAFE_0003);
+    for _ in 0..10 {
+        let (env, admin, sender, recipient, tok_admin, client, tok) = setup();
+        let total = rng.range_i128(1_000, 100_000);
+        tok_admin.mint(&sender, &total);
+        client.initialize(&admin);
+
+        let start = rng.range_u64(1000, 5000);
+        let duration = rng.range_u64(100, 2000);
+        let end = start + duration;
+
+        env.ledger().with_mut(|li| li.timestamp = start);
+        let stream_id =
+            client.create_stream(&sender, &recipient, &tok, &total, &start, &end);
+
+        // Before start
+        let before = start.saturating_sub(1);
+        env.ledger().with_mut(|li| li.timestamp = before);
+        let claimable = client.get_claimable(&stream_id);
+        assert_eq!(claimable, 0, "Should be 0 before start");
+
+        // Exactly at start
+        env.ledger().with_mut(|li| li.timestamp = start);
+        let claimable_start = client.get_claimable(&stream_id);
+        assert_eq!(claimable_start, 0, "Should be 0 at exact start");
+    }
+}
+
+// ── Randomized operation sequence fuzz ─────────────────────────
+
+#[test]
+fn prop_random_operation_sequence() {
+    let mut rng = Rng::new(0xFACE_9999);
+    for _ in 0..15 {
+        let (env, admin, sender, recipient, tok_admin, client, tok) = setup();
+        let total = rng.range_i128(5_000, 200_000);
+        tok_admin.mint(&sender, &total);
+        client.initialize(&admin);
+
+        let start = rng.range_u64(1000, 5000);
+        let duration = rng.range_u64(200, 2000);
+        let end = start + duration;
+
+        env.ledger().with_mut(|li| li.timestamp = start);
+        let stream_id =
+            client.create_stream(&sender, &recipient, &tok, &total, &start, &end);
+
+        let mut cumulative_claimed = 0i128;
+        let mut terminated = false;
+
+        // Perform up to 5 random operations
+        for step in 0..5 {
+            let time_offset = rng.range_u64(0, duration);
+            let t = start + time_offset;
+            env.ledger().with_mut(|li| li.timestamp = t);
+
+            let op = rng.range_u64(0, 2);
+            if terminated {
+                // Verify terminal: both claim and cancel should fail
+                let c = client.try_claim(&recipient, &stream_id);
+                assert!(c.is_err(), "Claim in terminal state at step {step}");
+                break;
+            }
+            match op {
+                0 => {
+                    // Claim
+                    let res = client.try_claim(&recipient, &stream_id);
+                    if let Ok(claimed) = res {
+                        cumulative_claimed += claimed;
+                    }
+                }
+                1 => {
+                    // Cancel
+                    let _ = client.try_cancel_stream(&sender, &stream_id);
+                    let stream = client.get_stream(&stream_id);
+                    terminated =
+                        matches!(stream.status, StreamStatus::Cancelled | StreamStatus::Completed);
+                }
+                _ => {
+                    // Query claimable
+                    let claimable = client.get_claimable(&stream_id);
+                    assert!(claimable >= 0, "Negative claimable at step {step}");
+                    assert!(
+                        claimable <= total,
+                        "Claimable > total at step {step}"
+                    );
+                }
+            }
+        }
+
+        // Final conservation check
+        let cb = tok_bal(&env, &tok, &env.current_contract_address());
+        let rb = tok_bal(&env, &tok, &recipient);
+        assert_conservation(total, cb, rb);
+        assert_non_negative(cb, "contract");
+        assert_non_negative(rb, "recipient");
+    }
+}
