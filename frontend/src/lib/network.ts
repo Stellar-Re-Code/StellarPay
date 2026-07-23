@@ -64,6 +64,21 @@ export function isPayrollContractConfigured(): boolean {
   return getPayrollStreamContractId().trim().length > 0
 }
 
+/**
+ * Resolve the vesting contract id at call time (not module load) so the
+ * Next.js build does not fail when the env var is unset. Falls back to the
+ * hard-coded `CONTRACTS.vesting`.
+ */
+export function getVestingContractId(): string {
+  const fromEnv = process.env.NEXT_PUBLIC_VESTING_CONTRACT_ID
+  return (fromEnv && fromEnv.trim()) || CONTRACTS.vesting
+}
+
+/** True when a vesting contract id is configured. */
+export function isVestingContractConfigured(): boolean {
+  return getVestingContractId().trim().length > 0
+}
+
 let serverInstance: rpc.Server | null = null
 
 /**
