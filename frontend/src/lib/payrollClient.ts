@@ -126,7 +126,7 @@ export class PayrollClient {
       }
 
       // Assemble with transaction data from simulation
-      const assembledTx = StellarSdk.rpc.assembleTransaction(tx, simResult) as StellarSdk.Transaction
+      const assembledTx = StellarSdk.rpc.assembleTransaction(tx, simResult).build()
       
       // Convert the assembledTx to XDR
       const xdrToSign = assembledTx.toXDR()
@@ -139,8 +139,8 @@ export class PayrollClient {
       if (onStateChange) onStateChange('submitting')
 
       const sendResult = await this.server.sendTransaction(signedTx)
-      if (sendResult.errorResultXdr) {
-        throw new Error(`Submission failed: ${sendResult.errorResultXdr}`)
+      if (sendResult.status === 'ERROR') {
+        throw new Error(`Submission failed: ${JSON.stringify(sendResult.errorResult ?? sendResult)}`)
       }
 
       if (onStateChange) onStateChange('polling')
