@@ -314,3 +314,70 @@ fn prop_conservation_multi_claim_then_cancel() {
         assert_non_negative(rb, "recipient");
     }
 }
+
+// ── Monotonicity: claimable is non-decreasing in time ──────────
+
+#[test]
+fn prop_monotonic_claimable() {
+    let mut rng = Rng::new(0xBEEF_4321);
+    for _ in 0..20 {
+        let (env, admin, sender, recipient, tok_admin, client, tok) = setup();
+        let total = rng.range_i128(1_000, 500_000);
+        tok_admin.mint(&sender, &total);
+        client.initialize(&admin);
+
+        let start = rng.range_u64(1000, 5000);
+        let duration = rng.range_u64(200, 2000);
+        let end = start + duration;
+
+        env.ledger().with_mut(|li| li.timestamp = start);
+        let stream_id =
+            client.create_stream(&sender, &recipient, &tok, &total, &start, &end);
+
+        let mut prev_claimable = 0i128;
+        for i in 1..=10 {
+            let t = start + (duration * i) / 10;
+            env.ledger().with_mut(|li| li.timestamp = t);
+            let claimable = client.get_claimable(&stream_id);
+            assert!(
+                claimable >= prev_claimable,
+                "Monotonicity violated at t={t}: claimable={claimable} < prev={prev_claimable}",
+            );
+            assert!(
+                claimable <= total,
+                "Claimable exceeds total: {claimable} > {total}",
+            );
+            prev_claimable = claimable;
+        }
+    }
+}
+
+// ── Monotonicity: after full vest, claimable stays constant ────
+
+#[test]
+fn prop_monotonic_post_completion() {
+    let mut rng = Rng::new(0xFEED_5678);
+    for _ in 0..10 {
+        let (env, admin, sender, recipient, tok_admin, client, tok) = setup();
+        let total = rng.range_i128(1_000, 500_000);
+        tok_admin.mint(&sender, &total);
+        client.initialize(&admin);
+
+        let start = rng.range_u64(1000, 3000);
+        let duration = rng.range_u64(100, 1000);
+        let end = start + duration;
+
+        env.ledger().with_mut(|li| li.timestamp = start);
+        let stream_id =
+            client.create_stream(&sender, &recipient, &tok, &total, &start, &end);
+
+        env.ledger().with_mut(|li| li.timestamp = end);
+        let claimable_at_end = client.get_claimable(&stream_id);
+        assert!(claimable_at_end > 0, "Nothing claimable at end");
+        let _ = client.claim(&recipient, &stream_id);
+
+        env.ledger().with_mut(|li| li.timestamp = end + 1000);
+        let claimable_after = client.get_claimable(&stream_id);
+        assert_eq!(claimable_after, 0);
+    }
+}
