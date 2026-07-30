@@ -31,3 +31,4 @@ deployed.json
 
 # Logs
 *.log
+contracts/**/test_snapshots/
