@@ -196,46 +196,46 @@ This document tracks all UI/UX and frontend integration tasks for the **StellarP
 **Labels:** `frontend`, `ui`, `vesting`
 **Description:** Form for creating new vesting schedules.
 - **Tasks:**
-  - [ ] Beneficiary address input.
-  - [ ] Token selector and total amount.
-  - [ ] Start date picker.
-  - [ ] Cliff duration input (months/days).
-  - [ ] Total vesting duration input.
-  - [ ] Label selector: "Team", "Advisor", "Seed", "Custom".
-  - [ ] Revocable toggle switch.
-  - [ ] Visual preview of vesting timeline.
+  - [x] Beneficiary address input. (@brightpixel-dev - 2026-07-23, issue #63)
+  - [x] Token selector and total amount. (@brightpixel-dev - 2026-07-23, issue #63 — free-text contract id input, matching the existing payroll form's convention)
+  - [x] Start date picker. (@brightpixel-dev - 2026-07-23, issue #63)
+  - [x] Cliff duration input (months/days). (@brightpixel-dev - 2026-07-23, issue #63 — days)
+  - [x] Total vesting duration input. (@brightpixel-dev - 2026-07-23, issue #63 — days)
+  - [x] Label selector: "Team", "Advisor", "Seed", "Custom". (@brightpixel-dev - 2026-07-23, issue #63)
+  - [x] Revocable toggle switch. (@brightpixel-dev - 2026-07-23, issue #63)
+  - [ ] Visual preview of vesting timeline. — Implemented as a data preview (total/cliff-unlock/cliff/full-vest), not a graphical timeline; see FE-17 note below.
 
 ### Issue #FE-17: Vesting Timeline Visualization
 **Priority:** High
 **Labels:** `frontend`, `ui`, `vesting`
 **Description:** Visual representation of vesting progress.
 - **Tasks:**
-  - [ ] Horizontal timeline bar showing cliff, linear vesting, and current position.
-  - [ ] Markers for: start, cliff date, current date, end date.
-  - [ ] Tooltip showing amounts at each point.
-  - [ ] Color coding: locked (gray), vested (green), claimed (blue).
-  - [ ] Wire up with `get_progress()` contract query.
+  - [ ] Horizontal timeline bar showing cliff, linear vesting, and current position. — Not built as a segmented timeline; issue #63 shipped a single-color vested/total progress bar instead (ScheduleCard.tsx). Left open as a real follow-up if the fuller visualization is still wanted.
+  - [ ] Markers for: start, cliff date, current date, end date. — Shown as text in an expandable detail panel, not as timeline markers.
+  - [ ] Tooltip showing amounts at each point. — Not built.
+  - [ ] Color coding: locked (gray), vested (green), claimed (blue). — Approximated via separate stat tiles (Claimed / Claimable / Not yet vested), not a color-coded bar.
+  - [x] Wire up with `get_progress()` contract query. (@brightpixel-dev - 2026-07-23, issue #63 — polled every ~3s while a schedule is Active)
 
 ### Issue #FE-18: Vesting Claim Modal
 **Priority:** High
 **Labels:** `frontend`, `soroban`, `vesting`
 **Description:** Allow beneficiaries to claim vested tokens.
 - **Tasks:**
-  - [ ] Show vesting progress: total, vested, claimed, claimable.
-  - [ ] "Claim" button with amount preview.
-  - [ ] Build XDR for `claim()` contract call.
-  - [ ] Success animation with claimed amount.
-  - [ ] Disable claim if nothing claimable or before cliff.
+  - [x] Show vesting progress: total, vested, claimed, claimable. (@brightpixel-dev - 2026-07-23, issue #63)
+  - [x] "Claim" button with amount preview. (@brightpixel-dev - 2026-07-23, issue #63)
+  - [x] Build XDR for `claim()` contract call. (@brightpixel-dev - 2026-07-23, issue #63)
+  - [ ] Success animation with claimed amount. — Success is surfaced via the shared TxStatus component (same as payroll's claim/cancel), no distinct animation; matches existing project convention rather than adding a one-off animation just for vesting.
+  - [x] Disable claim if nothing claimable or before cliff. (@brightpixel-dev - 2026-07-23, issue #63 — also distinguishes "before cliff" from "nothing to claim" in the message, since the contract returns the same error code for both)
 
 ### Issue #FE-19: Admin Revoke Panel
 **Priority:** Medium
 **Labels:** `frontend`, `ui`, `vesting`
 **Description:** Admin/grantor interface to revoke vesting schedules.
 - **Tasks:**
-  - [ ] List revocable schedules with revoke button.
-  - [ ] Confirmation modal with impact summary (tokens returned to grantor).
-  - [ ] Build XDR for `revoke()` contract call.
-  - [ ] Show post-revocation state clearly.
+  - [x] List revocable schedules with revoke button. (@brightpixel-dev - 2026-07-23, issue #63 — gated on isGrantor && schedule.revocable, since the contract returns the same Unauthorized code for "not revocable" as "not your schedule")
+  - [x] Confirmation modal with impact summary (tokens returned to grantor). (@brightpixel-dev - 2026-07-23, issue #63)
+  - [x] Build XDR for `revoke()` contract call. (@brightpixel-dev - 2026-07-23, issue #63)
+  - [x] Show post-revocation state clearly. (@brightpixel-dev - 2026-07-23, issue #63 — status badge updates to Revoked after refresh)
 
 ---
 
