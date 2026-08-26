@@ -59,3 +59,24 @@ pub struct VestingProgress {
     pub claimable_amount: i128,
     pub status: VestingStatus,
 }
+
+/// Settlement result emitted when a vesting schedule is revoked (issue #77).
+///
+/// Conservation invariant: `beneficiary_payout + issuer_refund + prior_claims`
+/// always equals the original escrow amount of the schedule.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VestingRevocation {
+    /// The revoked schedule.
+    pub schedule_id: u32,
+    /// Who performed the revocation (the grantor).
+    pub actor: Address,
+    /// Vested-but-unclaimed tokens paid to the beneficiary at revocation.
+    pub beneficiary_payout: i128,
+    /// Unvested tokens returned to the issuer/grantor.
+    pub issuer_refund: i128,
+    /// Tokens the beneficiary had already claimed before revocation.
+    pub prior_claims: i128,
+    /// Terminal state marker (always `Revoked`).
+    pub terminal_status: soroban_sdk::Symbol,
+}
