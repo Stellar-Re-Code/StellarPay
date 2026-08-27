@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec, symbol_short, token};
+use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Symbol, Vec};
 
 mod errors;
 mod storage;
@@ -7,11 +7,11 @@ mod types;
 
 use errors::VestingError;
 use storage::{
-    get_admin, has_admin, set_admin, get_schedule_count, set_schedule_count,
-    get_schedule, set_schedule, add_grantor_schedule, add_beneficiary_schedule,
-    get_grantor_schedules, get_beneficiary_schedules,
+    add_beneficiary_schedule, add_grantor_schedule, get_admin, get_beneficiary_schedules,
+    get_grantor_schedules, get_schedule, get_schedule_count, has_admin, set_admin, set_schedule,
+    set_schedule_count,
 };
-use types::{VestingSchedule, VestingStatus, VestingProgress};
+use types::{VestingProgress, VestingRevocation, VestingSchedule, VestingStatus};
 
 #[contract]
 pub struct VestingContract;
@@ -27,10 +27,8 @@ impl VestingContract {
         set_admin(&env, &admin);
         set_schedule_count(&env, 0);
 
-        env.events().publish(
-            (symbol_short!("init"),),
-            admin.clone(),
-        );
+        env.events()
+            .publish((symbol_short!("init"),), admin.clone());
 
         Ok(())
     }
@@ -48,6 +46,7 @@ impl VestingContract {
     /// * `total_duration` - Total seconds for the full vesting period
     /// * `label` - A descriptor like "team", "advisor", "seed"
     /// * `revocable` - Whether the grantor can revoke unvested tokens
+    #[allow(clippy::too_many_arguments)] // schedule definition is inherently multi-parameter
     pub fn create_schedule(
         env: Env,
         grantor: Address,
@@ -108,10 +107,8 @@ impl VestingContract {
         add_grantor_schedule(&env, &grantor, schedule_id);
         add_beneficiary_schedule(&env, &beneficiary, schedule_id);
 
-        env.events().publish(
-            (symbol_short!("v_create"), grantor.clone()),
-            schedule_id,
-        );
+        env.events()
+            .publish((symbol_short!("v_create"), grantor.clone()), schedule_id);
 
         Ok(schedule_id)
     }
@@ -124,8 +121,7 @@ impl VestingContract {
         }
         beneficiary.require_auth();
 
-        let mut schedule = get_schedule(&env, schedule_id)
-            .ok_or(VestingError::ScheduleNotFound)?;
+        let mut schedule = get_schedule(&env, schedule_id).ok_or(VestingError::ScheduleNotFound)?;
 
         if schedule.beneficiary != beneficiary {
             return Err(VestingError::Unauthorized);
@@ -159,67 +155,116 @@ impl VestingContract {
 
         set_schedule(&env, schedule_id, &schedule);
 
-        env.events().publish(
-            (symbol_short!("v_claim"), beneficiary.clone()),
-            claimable,
-        );
+        env.events()
+            .publish((symbol_short!("v_claim"), beneficiary.clone()), claimable);
 
         Ok(claimable)
     }
 
     /// Revoke a vesting schedule. Only the grantor can revoke, and only if `revocable` is true.
     /// Unvested tokens are returned to the grantor. Already-vested tokens remain claimable.
+    /// Revoke a vesting schedule and settle it exactly once:
+    ///
+    /// * beneficiary receives `vested_at_revocation - prior_claims`
+    /// * issuer receives `original_escrow - vested_at_revocation`
+    /// * `beneficiary_payout + issuer_refund + prior_claims == original_escrow`
+    ///   in every lifecycle (conservation invariant, enforced by tests)
+    ///
+    /// Rounding rule: the linear segment uses floor division (truncation
+    /// toward zero); any dust from truncation stays with the issuer refund,
+    /// never taken from the beneficiary.
+    ///
+    /// Terminal states reject revocation: an already-reverted schedule cannot
+    /// be reverted twice (replay), and a fully claimed schedule has nothing
+    /// left to settle.
     pub fn revoke(
         env: Env,
         grantor: Address,
         schedule_id: u32,
-    ) -> Result<i128, VestingError> {
+    ) -> Result<VestingRevocation, VestingError> {
         if !has_admin(&env) {
             return Err(VestingError::NotInitialized);
         }
         grantor.require_auth();
 
-        let mut schedule = get_schedule(&env, schedule_id)
-            .ok_or(VestingError::ScheduleNotFound)?;
+        let mut schedule = get_schedule(&env, schedule_id).ok_or(VestingError::ScheduleNotFound)?;
 
         if schedule.grantor != grantor {
             return Err(VestingError::Unauthorized);
         }
-        if schedule.status == VestingStatus::Revoked {
-            return Err(VestingError::ScheduleRevoked);
+
+        // Terminal states reject future revoke attempts.
+        match schedule.status {
+            VestingStatus::Revoked => return Err(VestingError::ScheduleRevoked),
+            VestingStatus::FullyClaimed => return Err(VestingError::AlreadyFullyClaimed),
+            VestingStatus::Active => {}
         }
         if !schedule.revocable {
             return Err(VestingError::Unauthorized);
         }
 
+        let prior_claims = schedule.claimed_amount;
+        let original_escrow = schedule.total_amount;
         let vested = Self::calculate_vested(&env, &schedule);
-        let unvested = schedule.total_amount - vested;
 
-        schedule.status = VestingStatus::Revoked;
-        schedule.total_amount = vested; // Cap at vested amount
+        // Checked arithmetic: vested can never exceed total_amount by
+        // construction of calculate_vested, but keep the subtraction explicit.
+        let beneficiary_payout = vested
+            .checked_sub(prior_claims)
+            .ok_or(VestingError::InvalidSchedule)?;
+        let issuer_refund = original_escrow
+            .checked_sub(vested)
+            .ok_or(VestingError::InvalidSchedule)?;
 
-        if unvested > 0 {
-            let token_client = token::Client::new(&env, &schedule.token);
-            if token_client.balance(&env.current_contract_address()) < unvested {
-                return Err(VestingError::InsufficientBalance);
-            }
-            token_client.transfer(&env.current_contract_address(), &grantor, &unvested);
+        let token_client = token::Client::new(&env, &schedule.token);
+        let contract_address = env.current_contract_address();
+        let required = beneficiary_payout
+            .checked_add(issuer_refund)
+            .ok_or(VestingError::InvalidSchedule)?;
+        if token_client.balance(&contract_address) < required {
+            return Err(VestingError::InsufficientBalance);
         }
 
+        // Atomic settlement: both transfers happen inside this invocation.
+        if beneficiary_payout > 0 {
+            token_client.transfer(
+                &contract_address,
+                &schedule.beneficiary,
+                &beneficiary_payout,
+            );
+        }
+        if issuer_refund > 0 {
+            token_client.transfer(&contract_address, &grantor, &issuer_refund);
+        }
+
+        schedule.status = VestingStatus::Revoked;
+        schedule.claimed_amount = vested; // everything vested is now settled
+        schedule.total_amount = vested; // cap recorded entitlement at vesting point
         set_schedule(&env, schedule_id, &schedule);
 
-        env.events().publish(
-            (symbol_short!("v_revoke"), grantor.clone()),
-            unvested,
-        );
+        let settlement = VestingRevocation {
+            schedule_id,
+            actor: grantor.clone(),
+            beneficiary_payout,
+            issuer_refund,
+            prior_claims,
+            terminal_status: Symbol::new(&env, "Revoked"),
+        };
+        env.events()
+            .publish((symbol_short!("v_revoke"), schedule_id), settlement.clone());
 
-        Ok(unvested)
+        Ok(settlement)
     }
 
     // ── Internal Helpers ─────────────────────────────────────────
 
     /// Calculate the total amount of tokens that have vested by now.
     /// Uses cliff + linear vesting model.
+    ///
+    /// Rounding rule (documented per issue #77): the linear segment uses
+    /// floor division — truncation toward zero. Any truncation dust stays
+    /// with the issuer's revocation refund; it is never taken out of the
+    /// beneficiary's entitlement.
     fn calculate_vested(env: &Env, schedule: &VestingSchedule) -> i128 {
         let now = env.ledger().timestamp();
 
@@ -245,8 +290,9 @@ impl VestingContract {
         let vesting_duration = schedule.total_duration - schedule.cliff_duration;
         let time_since_cliff = elapsed - schedule.cliff_duration;
 
-        let vested_linear = (remaining_amount * (time_since_cliff as i128)) / (vesting_duration as i128);
-        
+        let vested_linear =
+            (remaining_amount * (time_since_cliff as i128)) / (vesting_duration as i128);
+
         schedule.cliff_amount + vested_linear
     }
 
@@ -259,8 +305,7 @@ impl VestingContract {
 
     /// Get the vesting progress for a schedule.
     pub fn get_progress(env: Env, schedule_id: u32) -> Result<VestingProgress, VestingError> {
-        let schedule = get_schedule(&env, schedule_id)
-            .ok_or(VestingError::ScheduleNotFound)?;
+        let schedule = get_schedule(&env, schedule_id).ok_or(VestingError::ScheduleNotFound)?;
 
         let vested = Self::calculate_vested(&env, &schedule);
         let claimable = vested - schedule.claimed_amount;
@@ -298,7 +343,11 @@ impl VestingContract {
     }
 
     /// Upgrade the contract WASM. Restricted to admin.
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), VestingError> {
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), VestingError> {
         let stored_admin = get_admin(&env);
         if admin != stored_admin {
             return Err(VestingError::Unauthorized);
@@ -310,5 +359,5 @@ impl VestingContract {
 }
 
 mod test;
-mod test_sentinel_auth;
 mod test_properties;
+mod test_sentinel_auth;

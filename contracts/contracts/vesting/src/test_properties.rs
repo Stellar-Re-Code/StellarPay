@@ -11,8 +11,9 @@
 
 use super::*;
 use soroban_sdk::{
+    symbol_short,
     testutils::{Address as _, Ledger},
-    Address, Env, symbol_short, token,
+    token, Address, Env,
 };
 
 // ── Seeded PRNG ────────────────────────────────────────────────
@@ -37,23 +38,26 @@ impl Rng {
     }
 
     fn range_u64(&mut self, lo: u64, hi: u64) -> u64 {
-        if lo >= hi { return lo; }
+        if lo >= hi {
+            return lo;
+        }
         lo + (self.next_u32() as u64 % (hi - lo + 1))
     }
 
     fn range_i128(&mut self, lo: i128, hi: i128) -> i128 {
-        if lo >= hi { return lo; }
+        if lo >= hi {
+            return lo;
+        }
         lo + (self.next_u32() as i128 % (hi - lo + 1))
     }
 }
 
 // ── Test helpers ───────────────────────────────────────────────
 
-fn create_token_contract<'a>(
-    e: &Env,
-    admin: &Address,
-) -> token::StellarAssetClient<'a> {
-    let contract_addr = e.register_stellar_asset_contract(admin.clone());
+fn create_token_contract<'a>(e: &Env, admin: &Address) -> token::StellarAssetClient<'a> {
+    let contract_addr = e
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     token::StellarAssetClient::new(e, &contract_addr)
 }
 
@@ -73,10 +77,6 @@ fn setup_env() -> (Env, Address, Address, VestingContractClient<'static>) {
 
 fn tok_balance(e: &Env, tok: &Address, addr: &Address) -> i128 {
     create_token_client(e, tok).balance(addr)
-}
-
-fn assert_non_negative(val: i128, label: &str) {
-    assert!(val >= 0, "Negative balance: {label}={val}");
 }
 
 // ── Conservation: full lifecycle through revoke ────────────────
@@ -104,35 +104,47 @@ fn prop_conservation_revoke() {
 
         env.ledger().with_mut(|li| li.timestamp = start);
         let schedule_id = client.create_schedule(
-            &grantor, &beneficiary, &tok, &total,
-            &start, &cliff_duration, &cliff_amount, &total_duration,
-            &symbol_short!("team"), &true,
+            &grantor,
+            &beneficiary,
+            &tok,
+            &total,
+            &start,
+            &cliff_duration,
+            &cliff_amount,
+            &total_duration,
+            &symbol_short!("team"),
+            &true,
         );
 
         // Move to 50% vesting, then revoke
         let revoke_time = start + total_duration / 2;
         env.ledger().with_mut(|li| li.timestamp = revoke_time);
 
-        let _vested = client.get_progress(&schedule_id).vested_amount;
-        let unvested = client.revoke(&grantor, &schedule_id);
+        let vested_before = client.get_progress(&schedule_id).vested_amount;
+        let settlement = client.revoke(&grantor, &schedule_id);
 
-        // Conservation: vested (now capped at total_amount) + unvested == total
-        let schedule = client.get_schedule(&schedule_id);
-        let contract_balance = tok_balance(&env, &tok, &_contract);
-        let grantor_balance = tok_balance(&env, &tok, &grantor);
-
-        // After revoke: unvested goes to grantor, vested stays in contract
-        // Total = vested_still_in_contract + returned_to_grantor
+        // STRONG conservation (issue #77): payout + refund + prior claims == escrow
         assert_eq!(
-            schedule.total_amount + unvested,
+            settlement.beneficiary_payout + settlement.issuer_refund + settlement.prior_claims,
             total,
-            "Revoke conservation: schedule.total={} + unvested={} != total={}",
-            schedule.total_amount,
-            unvested,
+            "Revoke conservation: payout={} refund={} prior={} != total={}",
+            settlement.beneficiary_payout,
+            settlement.issuer_refund,
+            settlement.prior_claims,
             total,
         );
-        assert_non_negative(contract_balance, "contract");
-        assert_non_negative(grantor_balance, "grantor");
+        assert_eq!(settlement.beneficiary_payout, vested_before);
+
+        // Beneficiary actually received the payout on-chain.
+        assert_eq!(
+            tok_balance(&env, &tok, &beneficiary),
+            settlement.beneficiary_payout
+        );
+        assert_eq!(
+            tok_balance(&env, &tok, &grantor),
+            total - settlement.beneficiary_payout
+        );
+        assert_eq!(tok_balance(&env, &tok, &_contract), 0);
     }
 }
 
@@ -161,33 +173,56 @@ fn prop_conservation_claim_then_revoke() {
 
         env.ledger().with_mut(|li| li.timestamp = start);
         let schedule_id = client.create_schedule(
-            &grantor, &beneficiary, &tok, &total,
-            &start, &cliff_duration, &cliff_amount, &total_duration,
-            &symbol_short!("team"), &true,
+            &grantor,
+            &beneficiary,
+            &tok,
+            &total,
+            &start,
+            &cliff_duration,
+            &cliff_amount,
+            &total_duration,
+            &symbol_short!("team"),
+            &true,
         );
 
         // Claim at 50%
         let claim_time = start + total_duration / 2;
         env.ledger().with_mut(|li| li.timestamp = claim_time);
-        let _claimed = client.claim(&beneficiary, &schedule_id);
+        let claimed = client.claim(&beneficiary, &schedule_id);
 
         // Revoke at 75%
         let revoke_time = start + (total_duration * 3) / 4;
         env.ledger().with_mut(|li| li.timestamp = revoke_time);
-        let unvested = client.revoke(&grantor, &schedule_id);
+        let settlement = client.revoke(&grantor, &schedule_id);
 
-        // Conservation: after revoke, schedule.total_amount (now capped to vested)
-        // + unvested returned to grantor == original total.
-        // Claims just moved tokens from contract to beneficiary within the vested portion.
-        let schedule = client.get_schedule(&schedule_id);
+        // STRONG conservation (issue #77): payout + refund + prior claims == escrow
         assert_eq!(
-            schedule.total_amount + unvested,
+            settlement.beneficiary_payout + settlement.issuer_refund + settlement.prior_claims,
             total,
-            "Revoke conservation: schedule.total={} + unvested={} != total={}",
-            schedule.total_amount,
-            unvested,
+            "Revoke conservation: payout={} refund={} prior={} != total={}",
+            settlement.beneficiary_payout,
+            settlement.issuer_refund,
+            settlement.prior_claims,
             total,
         );
+        assert_eq!(settlement.prior_claims, claimed);
+
+        // On-chain balances: beneficiary holds claim + revocation payout,
+        // grantor got exactly the refund, contract is fully drained.
+        assert_eq!(
+            tok_balance(&env, &tok, &beneficiary),
+            claimed + settlement.beneficiary_payout
+        );
+        assert_eq!(
+            tok_balance(&env, &tok, &grantor),
+            settlement.issuer_refund,
+            "DBG total={} claimed={} payout={} refund={}",
+            total,
+            claimed,
+            settlement.beneficiary_payout,
+            settlement.issuer_refund
+        );
+        assert_eq!(tok_balance(&env, &tok, &_contract), 0);
     }
 }
 
@@ -216,9 +251,16 @@ fn prop_monotonic_vested() {
 
         env.ledger().with_mut(|li| li.timestamp = start);
         let schedule_id = client.create_schedule(
-            &grantor, &beneficiary, &tok, &total,
-            &start, &cliff_duration, &cliff_amount, &total_duration,
-            &symbol_short!("team"), &true,
+            &grantor,
+            &beneficiary,
+            &tok,
+            &total,
+            &start,
+            &cliff_duration,
+            &cliff_amount,
+            &total_duration,
+            &symbol_short!("team"),
+            &true,
         );
 
         let mut prev_vested = 0i128;
@@ -263,9 +305,16 @@ fn prop_cliff_invariant() {
 
         env.ledger().with_mut(|li| li.timestamp = start);
         let schedule_id = client.create_schedule(
-            &grantor, &beneficiary, &tok, &total,
-            &start, &cliff_duration, &cliff_amount, &total_duration,
-            &symbol_short!("team"), &true,
+            &grantor,
+            &beneficiary,
+            &tok,
+            &total,
+            &start,
+            &cliff_duration,
+            &cliff_amount,
+            &total_duration,
+            &symbol_short!("team"),
+            &true,
         );
 
         // Before cliff: vested should be 0
@@ -289,8 +338,7 @@ fn prop_cliff_invariant() {
         assert_eq!(
             progress_at_cliff.vested_amount, cliff_amount,
             "At cliff: vested={} should equal cliff_amount={}",
-            progress_at_cliff.vested_amount,
-            cliff_amount,
+            progress_at_cliff.vested_amount, cliff_amount,
         );
     }
 }
@@ -317,9 +365,16 @@ fn prop_terminal_no_claim_after_fully_claimed() {
 
         env.ledger().with_mut(|li| li.timestamp = start);
         let schedule_id = client.create_schedule(
-            &grantor, &beneficiary, &tok, &total,
-            &start, &(year), &(total / 4), &(4 * year),
-            &symbol_short!("team"), &true,
+            &grantor,
+            &beneficiary,
+            &tok,
+            &total,
+            &start,
+            &(year),
+            &(total / 4),
+            &(4 * year),
+            &symbol_short!("team"),
+            &true,
         );
 
         // Move past full vesting
@@ -330,7 +385,8 @@ fn prop_terminal_no_claim_after_fully_claimed() {
         assert_eq!(schedule.status, VestingStatus::FullyClaimed);
 
         // Further claims should fail
-        env.ledger().with_mut(|li| li.timestamp = start + 4 * year + 1000);
+        env.ledger()
+            .with_mut(|li| li.timestamp = start + 4 * year + 1000);
         let result = client.try_claim(&beneficiary, &schedule_id);
         assert!(result.is_err(), "Claim should fail after FullyClaimed");
     }
@@ -358,9 +414,16 @@ fn prop_terminal_no_claim_after_revoke() {
 
         env.ledger().with_mut(|li| li.timestamp = start);
         let schedule_id = client.create_schedule(
-            &grantor, &beneficiary, &tok, &total,
-            &start, &(year), &(total / 4), &(4 * year),
-            &symbol_short!("team"), &true,
+            &grantor,
+            &beneficiary,
+            &tok,
+            &total,
+            &start,
+            &(year),
+            &(total / 4),
+            &(4 * year),
+            &symbol_short!("team"),
+            &true,
         );
 
         // Claim at 50%
@@ -375,7 +438,8 @@ fn prop_terminal_no_claim_after_revoke() {
         assert_eq!(schedule.status, VestingStatus::Revoked);
 
         // Further claims should fail
-        env.ledger().with_mut(|li| li.timestamp = start + 3 * year + 1000);
+        env.ledger()
+            .with_mut(|li| li.timestamp = start + 3 * year + 1000);
         let result = client.try_claim(&beneficiary, &schedule_id);
         assert!(result.is_err(), "Claim should fail after Revoked");
     }
@@ -403,9 +467,16 @@ fn prop_no_overflow_large_amounts() {
 
         env.ledger().with_mut(|li| li.timestamp = start);
         let schedule_id = client.create_schedule(
-            &grantor, &beneficiary, &tok, &total,
-            &start, &(year), &(total / 4), &(4 * year),
-            &symbol_short!("team"), &true,
+            &grantor,
+            &beneficiary,
+            &tok,
+            &total,
+            &start,
+            &(year),
+            &(total / 4),
+            &(4 * year),
+            &symbol_short!("team"),
+            &true,
         );
 
         // Vest at 50% — must not overflow

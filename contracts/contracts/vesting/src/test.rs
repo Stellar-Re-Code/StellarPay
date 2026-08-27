@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, Address, Env, symbol_short, token};
+use soroban_sdk::{symbol_short, testutils::Address as _, testutils::Ledger, token, Address, Env};
 use types::VestingStatus;
 
 fn setup_env() -> (Env, Address, VestingContractClient<'static>) {
@@ -14,7 +14,9 @@ fn setup_env() -> (Env, Address, VestingContractClient<'static>) {
 }
 
 fn create_token_contract<'a>(e: &Env, admin: &Address) -> token::StellarAssetClient<'a> {
-    let contract_addr = e.register_stellar_asset_contract_v2(admin.clone()).address();
+    let contract_addr = e
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     token::StellarAssetClient::new(e, &contract_addr)
 }
 
@@ -31,7 +33,7 @@ fn test_create_schedule() {
     let (env, admin, client) = setup_env();
     let grantor = Address::generate(&env);
     let beneficiary = Address::generate(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_contract = create_token_contract(&env, &token_admin);
     let token_client = token::Client::new(&env, &token_contract.address);
@@ -51,12 +53,12 @@ fn test_create_schedule() {
         &beneficiary,
         &token_contract.address,
         &total_amount,
-        &1000_u64,     // start_time
-        &year,         // cliff_duration (1 year)
-        &25_000_i128,  // cliff_amount (25% for 1/4 time to match linear)
-        &(4 * year),   // total_duration (4 years)
+        &1000_u64,    // start_time
+        &year,        // cliff_duration (1 year)
+        &25_000_i128, // cliff_amount (25% for 1/4 time to match linear)
+        &(4 * year),  // total_duration (4 years)
         &symbol_short!("team"),
-        &true,         // revocable
+        &true, // revocable
     );
 
     assert_eq!(schedule_id, 0);
@@ -74,7 +76,7 @@ fn test_claim_tokens() {
     let (env, admin, client) = setup_env();
     let grantor = Address::generate(&env);
     let beneficiary = Address::generate(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_contract = create_token_contract(&env, &token_admin);
     let token_client = token::Client::new(&env, &token_contract.address);
@@ -107,7 +109,7 @@ fn test_claim_tokens() {
 
     let claimed = client.claim(&beneficiary, &schedule_id);
     assert_eq!(claimed, 50_000);
-    
+
     assert_eq!(token_client.balance(&beneficiary), 50_000);
     assert_eq!(token_client.balance(&client.address), 50_000);
 }
@@ -117,7 +119,7 @@ fn test_revoke_withdrawal() {
     let (env, admin, client) = setup_env();
     let grantor = Address::generate(&env);
     let beneficiary = Address::generate(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_contract = create_token_contract(&env, &token_admin);
     let token_client = token::Client::new(&env, &token_contract.address);
@@ -148,11 +150,32 @@ fn test_revoke_withdrawal() {
         li.timestamp = 1000 + (2 * year);
     });
 
-    let unvested = client.revoke(&grantor, &schedule_id);
-    assert_eq!(unvested, 50_000);
+    // At 2 years of a 4-year schedule with 25k cliff: linear segment vests
+    // 75k over years 1→4 → 25k more vested by year 2. Vested = 25k cliff
+    // + 25k linear = 50k. Prior claims = 0 → payout 50k, refund 50k.
+    let settlement = client.revoke(&grantor, &schedule_id);
+    assert_eq!(settlement.beneficiary_payout, 50_000);
+    assert_eq!(settlement.issuer_refund, 50_000);
+    assert_eq!(settlement.prior_claims, 0);
 
+    // Conservation: payout + refund + prior claims == original escrow
+    assert_eq!(
+        settlement.beneficiary_payout + settlement.issuer_refund + settlement.prior_claims,
+        100_000
+    ); // conservation
+
+    assert_eq!(token_client.balance(&beneficiary), 50_000); // vested share paid out
+    assert_eq!(token_client.balance(&grantor), 50_000); // unvested returned
+
+    // Terminal state: replayed revocation fails without balance changes.
+    let replay = client.try_revoke(&grantor, &schedule_id);
+    assert!(replay.is_err());
+    assert_eq!(token_client.balance(&beneficiary), 50_000);
     assert_eq!(token_client.balance(&grantor), 50_000);
-    assert_eq!(token_client.balance(&client.address), 50_000); // 50k still there for beneficiary to claim
+
+    // Terminal state: claim is rejected after revocation (already settled).
+    let late_claim = client.try_claim(&beneficiary, &schedule_id);
+    assert!(late_claim.is_err());
 }
 
 #[test]
@@ -160,7 +183,7 @@ fn test_insufficient_balance_on_create() {
     let (env, admin, client) = setup_env();
     let grantor = Address::generate(&env);
     let beneficiary = Address::generate(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_contract = create_token_contract(&env, &token_admin);
     // Grantor has 0 tokens
@@ -191,7 +214,7 @@ fn test_cliff_not_reached() {
     let (env, admin, client) = setup_env();
     let grantor = Address::generate(&env);
     let beneficiary = Address::generate(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_contract = create_token_contract(&env, &token_admin);
     token_contract.mint(&grantor, &100_000);
@@ -232,7 +255,7 @@ fn test_vesting_after_cliff() {
     let (env, admin, client) = setup_env();
     let grantor = Address::generate(&env);
     let beneficiary = Address::generate(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_contract = create_token_contract(&env, &token_admin);
     token_contract.mint(&grantor, &100_000);
@@ -273,7 +296,7 @@ fn test_explicit_cliff_amount() {
     let (env, admin, client) = setup_env();
     let grantor = Address::generate(&env);
     let beneficiary = Address::generate(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_contract = create_token_contract(&env, &token_admin);
     token_contract.mint(&grantor, &100_000);
