@@ -27,4 +27,10 @@ pub enum StreamError {
     InvalidStartTime = 10,
     /// The recipient address is invalid or same as sender.
     InvalidRecipient = 11,
+    /// Batch size exceeds the maximum allowed (50).
+    BatchTooLarge = 12,
+    /// Arithmetic operation overflowed.
+    ArithmeticOverflow = 13,
+    /// Duplicate recipient found in the batch.
+    DuplicateRecipient = 14,
 }

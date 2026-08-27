@@ -107,9 +107,15 @@ impl PayrollStreamContract {
         }
         sender.require_auth();
 
-        let mut stream_ids: Vec<u32> = Vec::new(&env);
-        let mut count = get_stream_count(&env);
+        let batch_size = streams.len();
+        if batch_size > 50 {
+            return Err(StreamError::BatchTooLarge);
+        }
+        
+        let mut token_totals: soroban_sdk::Map<Address, i128> = soroban_sdk::Map::new(&env);
+        let mut seen_recipients = Vec::new(&env);
 
+        // First pass: validation and escrow calculation
         for stream_params in streams.iter() {
             let recipient = stream_params.recipient;
             let token = stream_params.token;
@@ -120,12 +126,39 @@ impl PayrollStreamContract {
             if sender == recipient {
                 return Err(StreamError::InvalidRecipient);
             }
+            if seen_recipients.contains(recipient.clone()) {
+                return Err(StreamError::DuplicateRecipient);
+            }
+            seen_recipients.push_back(recipient.clone());
+
             if total_amount <= 0 {
                 return Err(StreamError::InvalidAmount);
             }
             if end_time <= start_time {
                 return Err(StreamError::InvalidDuration);
             }
+
+            let current_total = token_totals.get(token.clone()).unwrap_or(0);
+            let new_total = current_total.checked_add(total_amount).ok_or(StreamError::ArithmeticOverflow)?;
+            token_totals.set(token.clone(), new_total);
+        }
+
+        // Fund all tokens atomically
+        let contract_addr = env.current_contract_address();
+        for (token, amount) in token_totals.iter() {
+            token::Client::new(&env, &token).transfer(&sender, &contract_addr, &amount);
+        }
+
+        let mut stream_ids: Vec<u32> = Vec::new(&env);
+        let mut count = get_stream_count(&env);
+
+        // Second pass: persistence and event emission
+        for stream_params in streams.iter() {
+            let recipient = stream_params.recipient;
+            let token = stream_params.token;
+            let total_amount = stream_params.total_amount;
+            let start_time = stream_params.start_time;
+            let end_time = stream_params.end_time;
 
             let duration = end_time - start_time;
             let rate_per_second = total_amount / (duration as i128);
@@ -145,11 +178,14 @@ impl PayrollStreamContract {
                 rate_per_second,
             };
 
-            // TODO: Transfer total_amount from sender to contract (batch transfer optimization possible)
-            
             set_stream(&env, stream_id, &stream);
             add_sender_stream(&env, &sender, stream_id);
             add_recipient_stream(&env, &recipient, stream_id);
+            
+            env.events().publish(
+                (symbol_short!("s_create"), 1u32, sender.clone()),
+                stream_id,
+            );
             
             stream_ids.push_back(stream_id);
             count += 1;
