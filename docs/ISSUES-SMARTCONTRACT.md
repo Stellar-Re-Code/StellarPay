@@ -132,10 +132,10 @@ Each issue is self-contained and can be picked up independently.
 **Labels:** `smart-contract`, `feature`, `payroll`
 **Description:** Add a `create_batch_streams()` function for bulk payroll setup.
 - **Tasks:**
-  - [ ] Accept a `Vec` of stream parameters.
-  - [ ] Create multiple streams in a single contract call.
-  - [ ] Emit a single batch event with all stream IDs.
-  - [ ] Add unit test for batch creation.
+  - [x] Accept a `Vec` of stream parameters. (@antigravity - 2026-08-27 00:54 UTC)
+  - [x] Create multiple streams in a single contract call. (@antigravity - 2026-08-27 00:54 UTC)
+  - [x] Emit a single batch event with all stream IDs. (@antigravity - 2026-08-27 00:54 UTC)
+  - [x] Add unit test for batch creation. (@antigravity - 2026-08-27 00:54 UTC)
 
 ---
 
