@@ -516,4 +516,143 @@ fn test_claim_then_cancel() {
     assert_eq!(token_client.balance(&sender), 4000);
 }
 
+#[test]
+fn test_create_batch_streams_token_transfers() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_admin_client = create_token_contract(&env, &token_admin);
+    let token = token_admin_client.address.clone();
+    let token_client = create_token_client(&env, &token);
+    token_admin_client.mint(&sender, &100000);
 
+    client.initialize(&admin);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000;
+    });
+
+    let mut streams = Vec::new(&env);
+    let recipient1 = Address::generate(&env);
+    let recipient2 = Address::generate(&env);
+    
+    streams.push_back(CreateStreamParams {
+        recipient: recipient1.clone(),
+        token: token.clone(),
+        total_amount: 10000,
+        start_time: 1000,
+        end_time: 2000,
+    });
+
+    streams.push_back(CreateStreamParams {
+        recipient: recipient2.clone(),
+        token: token.clone(),
+        total_amount: 20000,
+        start_time: 1000,
+        end_time: 3000,
+    });
+
+    let contract_address = client.address.clone();
+    
+    // Create batch
+    client.create_batch_streams(&sender, &streams);
+    
+    // Sender should have 100000 - 30000 = 70000
+    assert_eq!(token_client.balance(&sender), 70000);
+    // Contract should have 30000
+    assert_eq!(token_client.balance(&contract_address), 30000);
+}
+
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #12)")]
+fn test_create_batch_streams_batch_too_large() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_admin_client = create_token_contract(&env, &token_admin);
+    let token = token_admin_client.address.clone();
+    token_admin_client.mint(&sender, &1000000);
+
+    client.initialize(&admin);
+
+    let mut streams = Vec::new(&env);
+    
+    for _ in 0..51 {
+        streams.push_back(CreateStreamParams {
+            recipient: Address::generate(&env),
+            token: token.clone(),
+            total_amount: 100,
+            start_time: 1000,
+            end_time: 2000,
+        });
+    }
+
+    client.create_batch_streams(&sender, &streams);
+}
+
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #14)")]
+fn test_create_batch_streams_duplicate_recipient() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_admin_client = create_token_contract(&env, &token_admin);
+    let token = token_admin_client.address.clone();
+    token_admin_client.mint(&sender, &100000);
+
+    client.initialize(&admin);
+
+    let mut streams = Vec::new(&env);
+    let recipient1 = Address::generate(&env);
+    
+    streams.push_back(CreateStreamParams {
+        recipient: recipient1.clone(),
+        token: token.clone(),
+        total_amount: 10000,
+        start_time: 1000,
+        end_time: 2000,
+    });
+
+    streams.push_back(CreateStreamParams {
+        recipient: recipient1.clone(),
+        token: token.clone(),
+        total_amount: 20000,
+        start_time: 1000,
+        end_time: 3000,
+    });
+
+    client.create_batch_streams(&sender, &streams);
+}
+
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #13)")]
+fn test_create_batch_streams_arithmetic_overflow() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_admin_client = create_token_contract(&env, &token_admin);
+    let token = token_admin_client.address.clone();
+    token_admin_client.mint(&sender, &100000);
+
+    client.initialize(&admin);
+
+    let mut streams = Vec::new(&env);
+    
+    streams.push_back(CreateStreamParams {
+        recipient: Address::generate(&env),
+        token: token.clone(),
+        total_amount: i128::MAX,
+        start_time: 1000,
+        end_time: 2000,
+    });
+
+    streams.push_back(CreateStreamParams {
+        recipient: Address::generate(&env),
+        token: token.clone(),
+        total_amount: 1,
+        start_time: 1000,
+        end_time: 3000,
+    });
+
+    client.create_batch_streams(&sender, &streams);
+}
