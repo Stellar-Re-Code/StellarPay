@@ -1,8 +1,54 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, testutils::Events, Address, Env, Vec, token};
-use types::{StreamStatus, CancelSettlement};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, testutils::Address as _, testutils::Events,
+    testutils::Ledger, token, Address, Env, Vec,
+};
+use types::{CancelSettlement, StreamStatus};
+
+#[contract]
+struct FeeOnTransferToken;
+
+#[contracttype]
+#[derive(Clone)]
+enum FeeTokenKey {
+    Balance(Address),
+}
+
+#[contractimpl]
+impl FeeOnTransferToken {
+    pub fn mint(env: Env, recipient: Address, amount: i128) {
+        let key = FeeTokenKey::Balance(recipient);
+        let balance = env.storage().instance().get(&key).unwrap_or(0);
+        env.storage().instance().set(&key, &(balance + amount));
+    }
+
+    pub fn balance(env: Env, address: Address) -> i128 {
+        env.storage()
+            .instance()
+            .get(&FeeTokenKey::Balance(address))
+            .unwrap_or(0)
+    }
+
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        let from_key = FeeTokenKey::Balance(from);
+        let from_balance = env.storage().instance().get(&from_key).unwrap_or(0);
+        assert!(from_balance >= amount);
+        env.storage()
+            .instance()
+            .set(&from_key, &(from_balance - amount));
+
+        let to_key = FeeTokenKey::Balance(to);
+        let to_balance = env.storage().instance().get(&to_key).unwrap_or(0);
+        // A 1% burn makes the token superficially SEP-41-compatible but
+        // undercollateralizes a nominal-value escrow.
+        env.storage()
+            .instance()
+            .set(&to_key, &(to_balance + (amount * 99 / 100)));
+    }
+}
 
 fn setup_env() -> (Env, Address, PayrollStreamContractClient<'static>) {
     let env = Env::default();
@@ -77,7 +123,7 @@ fn test_create_batch_streams() {
     });
 
     let mut streams = Vec::new(&env);
-    
+
     // Stream 1
     streams.push_back(CreateStreamParams {
         recipient: Address::generate(&env),
@@ -97,16 +143,34 @@ fn test_create_batch_streams() {
     });
 
     let stream_ids = client.create_batch_streams(&sender, &streams);
-    
+
     assert_eq!(stream_ids.len(), 2);
     assert_eq!(stream_ids.get(0).unwrap(), 0);
     assert_eq!(stream_ids.get(1).unwrap(), 1);
 
     let stream0 = client.get_stream(&0);
     assert_eq!(stream0.total_amount, 10000);
-    
+
     let stream1 = client.get_stream(&1);
     assert_eq!(stream1.total_amount, 20000);
+}
+
+#[test]
+fn test_fee_on_transfer_token_breaks_escrow_conservation() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = env.register(FeeOnTransferToken, ());
+    let fee_token = FeeOnTransferTokenClient::new(&env, &token);
+    fee_token.mint(&sender, &100);
+    client.initialize(&admin);
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    client.create_stream(&sender, &recipient, &token, &100, &1_000, &2_000);
+    assert_eq!(fee_token.balance(&client.address), 99);
+
+    env.ledger().with_mut(|li| li.timestamp = 2_000);
+    assert!(client.try_claim(&recipient, &0).is_err());
 }
 
 #[test]
@@ -157,13 +221,13 @@ fn test_cancel_stream() {
     let (env, admin, client) = setup_env();
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    
+
     // Setup token and mint to sender
     let token_admin = Address::generate(&env);
     let token_admin_client = create_token_contract(&env, &token_admin);
     let token = token_admin_client.address.clone();
     let token_client = create_token_client(&env, &token);
-    
+
     token_admin_client.mint(&sender, &20000);
 
     client.initialize(&admin);
@@ -191,10 +255,10 @@ fn test_cancel_stream() {
     let settlement = client.cancel_stream(&sender, &stream_id);
     assert_eq!(settlement.recipient_amount, 0);
     assert_eq!(settlement.sender_refund, 10000);
-    
+
     let stream_cancelled = client.get_stream(&stream_id);
     assert_eq!(stream_cancelled.status, StreamStatus::Cancelled);
-    
+
     // Recipient gets 0
     assert_eq!(token_client.balance(&recipient), 0);
     // Sender gets refund (assumes contract had funds)
@@ -208,12 +272,12 @@ fn test_cancel_stream_midway() {
     let (env, admin, client) = setup_env();
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_admin_client = create_token_contract(&env, &token_admin);
     let token = token_admin_client.address.clone();
     let token_client = create_token_client(&env, &token);
-    
+
     token_admin_client.mint(&sender, &10000);
 
     client.initialize(&admin);
@@ -254,12 +318,12 @@ fn test_cancel_stream_after_end() {
     let (env, admin, client) = setup_env();
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_admin_client = create_token_contract(&env, &token_admin);
     let token = token_admin_client.address.clone();
     let token_client = create_token_client(&env, &token);
-    
+
     token_admin_client.mint(&sender, &10000);
 
     client.initialize(&admin);
@@ -302,7 +366,14 @@ fn test_storage_lifecycle_not_initialized_create_stream() {
     let token_admin_client = create_token_contract(&env, &token_admin);
     let token = token_admin_client.address.clone();
     token_admin_client.mint(&sender, &100000);
-    client.create_stream(&sender, &recipient, &token, &10000_i128, &1000_u64, &2000_u64);
+    client.create_stream(
+        &sender,
+        &recipient,
+        &token,
+        &10000_i128,
+        &1000_u64,
+        &2000_u64,
+    );
 }
 
 #[test]
@@ -310,12 +381,12 @@ fn test_invariant_financial_settlement_on_cancel() {
     let (env, admin, client) = setup_env();
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_admin_client = create_token_contract(&env, &token_admin);
     let token = token_admin_client.address.clone();
     let token_client = create_token_client(&env, &token);
-    
+
     let total_amount = 20000_i128;
     token_admin_client.mint(&sender, &total_amount);
 
@@ -396,7 +467,7 @@ fn test_event_emission_coverage() {
 
     let _ = client.claim(&recipient, &stream_id);
     total_events += env.events().all().len();
-    
+
     client.cancel_stream(&sender, &stream_id);
     total_events += env.events().all().len();
 
@@ -412,7 +483,7 @@ fn test_cancel_stream_unauthorized() {
     let token_admin = Address::generate(&env);
     let token_admin_client = create_token_contract(&env, &token_admin);
     let token = token_admin_client.address.clone();
-    
+
     token_admin_client.mint(&sender, &10000);
 
     client.initialize(&admin);
@@ -437,11 +508,11 @@ fn test_repeated_cancel() {
     let (env, admin, client) = setup_env();
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_admin_client = create_token_contract(&env, &token_admin);
     let token = token_admin_client.address.clone();
-    
+
     token_admin_client.mint(&sender, &10000);
 
     client.initialize(&admin);
@@ -467,12 +538,12 @@ fn test_claim_then_cancel() {
     let (env, admin, client) = setup_env();
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    
+
     let token_admin = Address::generate(&env);
     let token_admin_client = create_token_contract(&env, &token_admin);
     let token = token_admin_client.address.clone();
     let token_client = create_token_client(&env, &token);
-    
+
     token_admin_client.mint(&sender, &10000);
 
     client.initialize(&admin);
@@ -535,7 +606,7 @@ fn test_create_batch_streams_token_transfers() {
     let mut streams = Vec::new(&env);
     let recipient1 = Address::generate(&env);
     let recipient2 = Address::generate(&env);
-    
+
     streams.push_back(CreateStreamParams {
         recipient: recipient1.clone(),
         token: token.clone(),
@@ -553,10 +624,10 @@ fn test_create_batch_streams_token_transfers() {
     });
 
     let contract_address = client.address.clone();
-    
+
     // Create batch
     client.create_batch_streams(&sender, &streams);
-    
+
     // Sender should have 100000 - 30000 = 70000
     assert_eq!(token_client.balance(&sender), 70000);
     // Contract should have 30000
@@ -576,7 +647,7 @@ fn test_create_batch_streams_batch_too_large() {
     client.initialize(&admin);
 
     let mut streams = Vec::new(&env);
-    
+
     for _ in 0..51 {
         streams.push_back(CreateStreamParams {
             recipient: Address::generate(&env),
@@ -604,7 +675,7 @@ fn test_create_batch_streams_duplicate_recipient() {
 
     let mut streams = Vec::new(&env);
     let recipient1 = Address::generate(&env);
-    
+
     streams.push_back(CreateStreamParams {
         recipient: recipient1.clone(),
         token: token.clone(),
@@ -637,7 +708,7 @@ fn test_create_batch_streams_arithmetic_overflow() {
     client.initialize(&admin);
 
     let mut streams = Vec::new(&env);
-    
+
     streams.push_back(CreateStreamParams {
         recipient: Address::generate(&env),
         token: token.clone(),
