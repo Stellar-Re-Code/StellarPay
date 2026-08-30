@@ -142,5 +142,78 @@ This document tracks the off-chain infrastructure tasks for the **StellarPay** p
 
 ---
 
+## 🗂️ Phase 4: Privacy-Preserving History & Audit Index (BK-11 to BK-16)
+
+> Source architecture: `docs/ADR-0001-privacy-preserving-history-index.md` and `docs/EVENT_SCHEMA.md` (issue #79 spike). These tickets are independently mergeable and defined in the ADR.
+
+### Issue #BK-11: History & Audit Database Schema
+**Category:** `[INFRA]`
+**Status:** ❌ PENDING
+**Priority:** High
+**Description:** PostgreSQL schema and migrations for the materialized history index.
+- **Tasks:**
+  - [ ] Create migrations for `streams`, `vesting_schedules`, `stream_events`, `vesting_events`, `batch_creates`, `account_links`, `indexer_state`.
+  - [ ] Uniqueness constraints follow content-derived identity: state rows key on the on-chain id; events key on `(ledger, tx, index)`.
+  - [ ] Add monotonic `last_event_ledger` guard column to state rows.
+  - [ ] `discrepancies` table for reconciler output.
+  - [ ] `.env.example` with required configuration (RPC URL, contract ids, retention, access control).
+
+### Issue #BK-12: Forward Event Indexer with Claim Correlation
+**Category:** `[INFRA]`
+**Status:** ❌ PENDING
+**Priority:** High
+**Description:** Poll Soroban RPC `getEvents`, correlate claims to objects, write state rows idempotently.
+- **Tasks:**
+  - [ ] Poll `getEvents` for the payroll and vesting contracts.
+  - [ ] Correlate `claim`/`v_claim` to their stream/schedule from transaction context.
+  - [ ] Write state rows with the no-regression guard; skip stale writes.
+  - [ ] Durable cursor for restart recovery with overlap window.
+  - [ ] Exponential-backoff retry for RPC outages.
+
+### Issue #BK-13: Batch Create Audit Handling
+**Category:** `[INFRA]`
+**Status:** ❌ PENDING
+**Priority:** Medium
+**Description:** Handle `b_create` aggregate events without double-counting streams.
+- **Tasks:**
+  - [ ] Store `b_create` as an audit row in `stream_events` / `batch_creates`.
+  - [ ] Create streams only from per-item `s_create` events.
+  - [ ] Test covering a 50-stream batch.
+
+### Issue #BK-14: Real Reconciler
+**Category:** `[INFRA]`
+**Status:** ❌ PENDING
+**Priority:** High
+**Description:** Replace the mock contract reads in the reconciler prototype with real reads.
+- **Tasks:**
+  - [ ] Use `simulateTransaction` read invocations against contract state.
+  - [ ] Diff `claimed_amount`, `status`, and derived totals per object.
+  - [ ] Tie claim/cancel/revoke event sums to SAC `transfer` events.
+  - [ ] Record mismatches in `discrepancies` and wire an alert.
+
+### Issue #BK-15: History Read API with Access Control
+**Category:** `[API]`
+**Status:** ❌ PENDING
+**Priority:** Medium
+**Description:** Expose scoped history endpoints backed by the index.
+- **Tasks:**
+  - [ ] `GET /api/streams`, `GET /api/vesting`, and event endpoints served from materialized rows.
+  - [ ] Enforce access control from `account_links` on every read.
+  - [ ] Admin/auditor scopes their organization; recipients see their own rows only.
+  - [ ] Pagination support.
+
+### Issue #BK-16: Backfill and Retention Jobs
+**Category:** `[INFRA]`
+**Status:** ❌ PENDING
+**Priority:** Low
+**Description:** Backfill from the RPC anchor and first-release retention/purge jobs.
+- **Tasks:**
+  - [ ] Backfill seed from paged contract listings, then replay events within the retention window.
+  - [ ] Resumable and idempotent backfill sharing the live upsert path.
+  - [ ] `RETENTION_WINDOW` eviction for terminal objects.
+  - [ ] `PURGE_UNLINKED` removes account links with no remaining active rows.
+
+---
+
 ## ✅ Completed Issues
 *(Move completed items here)*

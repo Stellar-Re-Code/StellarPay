@@ -86,7 +86,7 @@ StellarPay/
 │   ├── MODULE_BOUNDARY.md           # Treasury/governance disposition matrix
 │   ├── ISSUES-SMARTCONTRACT.md       # 25 smart contract issues
 │   ├── ISSUES-FRONTEND.md           # 25 frontend issues
-│   ├── ISSUES-BACKEND.md            # 10 backend/indexer issues
+│   ├── ISSUES-BACKEND.md            # 16 backend/indexer issues
 │   ├── ISSUES-SDK-TOOLING.md        # 10 SDK/tooling issues
 │   ├── SMARTCONTRACT_GUIDE.md       # Contract development guide
 │   └── FRONTEND_GUIDE.md            # Frontend integration guide
@@ -133,7 +133,7 @@ We have separated our task lists for better organization. Please refer to the sp
 
 - 🧠 [Smart Contract Issues](docs/ISSUES-SMARTCONTRACT.md) — 25 issues across 4 contracts
 - 🎨 [Frontend Issues](docs/ISSUES-FRONTEND.md) — 25 issues for the Next.js dashboard
-- ⚙️ [Backend & Indexer Issues](docs/ISSUES-BACKEND.md) — 10 issues for the off-chain stack
+- ⚙️ [Backend & Indexer Issues](docs/ISSUES-BACKEND.md) — 16 issues for the off-chain stack
 - 🛠 [SDK & Tooling Issues](docs/ISSUES-SDK-TOOLING.md) — 10 issues for SDK, CLI, and DevOps
 
 ### Guides:
