@@ -60,6 +60,11 @@ export interface VestingProgressData {
   status: VestingStatus
 }
 
+export interface SchedulePage {
+  scheduleIds: number[]
+  nextCursor: number
+}
+
 const TX_TIMEOUT_SECONDS = 60
 const POLL_INTERVAL_MS = 2000
 const MAX_POLL_ATTEMPTS = 30
@@ -310,28 +315,39 @@ export async function getProgress(
   return decodeProgress(raw)
 }
 
-/** get_schedules_by_grantor -> Vec<u32>. */
-export async function getSchedulesByGrantor(
-  sourceAccount: string,
-  grantor: string,
-): Promise<number[]> {
-  const raw = await simulateRead<Array<number | bigint>>(
-    sourceAccount,
-    'get_schedules_by_grantor',
-    [addressScVal(grantor)],
-  )
-  return (raw ?? []).map((n) => Number(n))
+function decodeSchedulePage(raw: Record<string, unknown>): SchedulePage {
+  return {
+    scheduleIds: ((raw.schedule_ids as Array<number | bigint>) ?? []).map((id) => Number(id)),
+    nextCursor: Number(raw.next_cursor ?? 0),
+  }
 }
 
-/** get_schedules_by_beneficiary -> Vec<u32>. */
-export async function getSchedulesByBeneficiary(
+/** get_schedules_by_grantor_page -> capped page of schedule IDs. */
+export async function getSchedulesByGrantorPage(
+  sourceAccount: string,
+  grantor: string,
+  cursor: number,
+  limit: number,
+): Promise<SchedulePage> {
+  const raw = await simulateRead<Record<string, unknown>>(
+    sourceAccount,
+    'get_schedules_by_grantor_page',
+    [addressScVal(grantor), nativeToScVal(cursor, { type: 'u32' }), nativeToScVal(limit, { type: 'u32' })],
+  )
+  return decodeSchedulePage(raw)
+}
+
+/** get_schedules_by_beneficiary_page -> capped page of schedule IDs. */
+export async function getSchedulesByBeneficiaryPage(
   sourceAccount: string,
   beneficiary: string,
-): Promise<number[]> {
-  const raw = await simulateRead<Array<number | bigint>>(
+  cursor: number,
+  limit: number,
+): Promise<SchedulePage> {
+  const raw = await simulateRead<Record<string, unknown>>(
     sourceAccount,
-    'get_schedules_by_beneficiary',
-    [addressScVal(beneficiary)],
+    'get_schedules_by_beneficiary_page',
+    [addressScVal(beneficiary), nativeToScVal(cursor, { type: 'u32' }), nativeToScVal(limit, { type: 'u32' })],
   )
-  return (raw ?? []).map((n) => Number(n))
+  return decodeSchedulePage(raw)
 }

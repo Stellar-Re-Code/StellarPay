@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror};
+use soroban_sdk::contracterror;
 
 /// Error codes for the Payroll Stream contract.
 #[contracterror]
@@ -33,4 +33,8 @@ pub enum StreamError {
     ArithmeticOverflow = 13,
     /// Duplicate recipient found in the batch.
     DuplicateRecipient = 14,
+    /// The requested page cursor is beyond the end of the index.
+    InvalidCursor = 15,
+    /// A page must request at least one record.
+    InvalidPageSize = 16,
 }

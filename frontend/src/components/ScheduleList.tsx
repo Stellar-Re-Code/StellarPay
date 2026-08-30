@@ -22,6 +22,8 @@ interface ScheduleListProps {
   txState: TxState
   resetTx: () => void
   refresh: () => void
+  loadMore: () => void
+  hasMore: boolean
   getProgress: (scheduleId: number) => Promise<VestingProgressData | null>
   onClaim: (scheduleId: number) => Promise<{ ok: boolean }>
   onRevoke: (scheduleId: number) => Promise<{ ok: boolean }>
@@ -35,6 +37,8 @@ export default function ScheduleList({
   txState,
   resetTx,
   refresh,
+  loadMore,
+  hasMore,
   getProgress,
   onClaim,
   onRevoke,
@@ -122,6 +126,11 @@ export default function ScheduleList({
                 onRevoke={onRevoke}
               />
             ))}
+            {hasMore && (
+              <button type="button" onClick={loadMore} disabled={isLoading} className="rounded-lg border border-stellar-border px-4 py-2 text-sm text-gray-300 hover:border-stellar-primary disabled:opacity-50">
+                Load more schedules
+              </button>
+            )}
           </div>
         )}
       </div>

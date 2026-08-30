@@ -727,3 +727,107 @@ fn test_create_batch_streams_arithmetic_overflow() {
 
     client.create_batch_streams(&sender, &streams);
 }
+
+#[test]
+fn test_stream_pages_cover_empty_boundaries_and_invalid_cursors() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    token.mint(&sender, &10_000);
+    client.initialize(&admin);
+
+    let empty = client.get_streams_by_sender_page(&sender, &0, &2);
+    assert_eq!(empty.stream_ids.len(), 0);
+    assert_eq!(empty.next_cursor, 0);
+
+    for _ in 0..5 {
+        client.create_stream(
+            &sender,
+            &Address::generate(&env),
+            &token.address,
+            &100_i128,
+            &1_u64,
+            &2_u64,
+        );
+    }
+
+    let first = client.get_streams_by_sender_page(&sender, &0, &2);
+    assert_eq!(first.stream_ids, soroban_sdk::vec![&env, 0, 1]);
+    assert_eq!(first.next_cursor, 2);
+    let middle = client.get_streams_by_sender_page(&sender, &first.next_cursor, &2);
+    assert_eq!(middle.stream_ids, soroban_sdk::vec![&env, 2, 3]);
+    assert_eq!(middle.next_cursor, 4);
+    let final_page = client.get_streams_by_sender_page(&sender, &middle.next_cursor, &50);
+    assert_eq!(final_page.stream_ids, soroban_sdk::vec![&env, 4]);
+    assert_eq!(final_page.next_cursor, 0);
+
+    // A cursor at the current end is safe to retry; a cursor beyond it is stale.
+    assert_eq!(
+        client
+            .get_streams_by_sender_page(&sender, &5, &2)
+            .stream_ids
+            .len(),
+        0
+    );
+    assert!(client
+        .try_get_streams_by_sender_page(&sender, &6, &2)
+        .is_err());
+    assert!(client
+        .try_get_streams_by_sender_page(&sender, &0, &0)
+        .is_err());
+}
+
+#[test]
+fn test_stream_creation_index_writes_are_bounded() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    token.mint(&sender, &10_000);
+    client.initialize(&admin);
+
+    client.create_stream(
+        &sender,
+        &recipient,
+        &token.address,
+        &100_i128,
+        &1_u64,
+        &2_u64,
+    );
+    let first = env.cost_estimate().resources();
+    for _ in 0..24 {
+        client.create_stream(
+            &sender,
+            &recipient,
+            &token.address,
+            &100_i128,
+            &1_u64,
+            &2_u64,
+        );
+    }
+    let later = env.cost_estimate().resources();
+
+    // Each append writes a fixed set of keys: stream, global count, and two
+    // account index entry/count pairs. It must not rewrite prior index entries.
+    assert!(later.write_entries <= first.write_entries);
+}
+
+#[test]
+fn test_stream_pages_include_legacy_vector_index() {
+    let (env, admin, client) = setup_env();
+    let sender = Address::generate(&env);
+    client.initialize(&admin);
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(
+            &storage::DataKey::LegacySenderStreams(sender.clone()),
+            &soroban_sdk::vec![&env, 41_u32],
+        );
+    });
+
+    assert_eq!(
+        client.get_streams_by_sender_page(&sender, &0, &10).stream_ids,
+        soroban_sdk::vec![&env, 41_u32]
+    );
+}

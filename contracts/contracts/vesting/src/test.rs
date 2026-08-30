@@ -72,6 +72,81 @@ fn test_create_schedule() {
 }
 
 #[test]
+fn test_schedule_pages_cover_empty_boundaries_and_invalid_cursors() {
+    let (env, admin, client) = setup_env();
+    let grantor = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    token.mint(&grantor, &10_000);
+    client.initialize(&admin);
+
+    let empty = client.get_schedules_by_beneficiary_page(&beneficiary, &0, &2);
+    assert_eq!(empty.schedule_ids.len(), 0);
+    assert_eq!(empty.next_cursor, 0);
+
+    for _ in 0..5 {
+        client.create_schedule(
+            &grantor,
+            &beneficiary,
+            &token.address,
+            &100_i128,
+            &1_u64,
+            &0_u64,
+            &0_i128,
+            &2_u64,
+            &symbol_short!("team"),
+            &true,
+        );
+    }
+
+    let first = client.get_schedules_by_beneficiary_page(&beneficiary, &0, &2);
+    assert_eq!(first.schedule_ids, soroban_sdk::vec![&env, 0, 1]);
+    assert_eq!(first.next_cursor, 2);
+    let middle = client.get_schedules_by_beneficiary_page(&beneficiary, &first.next_cursor, &2);
+    assert_eq!(middle.schedule_ids, soroban_sdk::vec![&env, 2, 3]);
+    assert_eq!(middle.next_cursor, 4);
+    let final_page =
+        client.get_schedules_by_beneficiary_page(&beneficiary, &middle.next_cursor, &50);
+    assert_eq!(final_page.schedule_ids, soroban_sdk::vec![&env, 4]);
+    assert_eq!(final_page.next_cursor, 0);
+
+    assert_eq!(
+        client
+            .get_schedules_by_beneficiary_page(&beneficiary, &5, &2)
+            .schedule_ids
+            .len(),
+        0
+    );
+    assert!(client
+        .try_get_schedules_by_beneficiary_page(&beneficiary, &6, &2)
+        .is_err());
+    assert!(client
+        .try_get_schedules_by_beneficiary_page(&beneficiary, &0, &0)
+        .is_err());
+}
+
+#[test]
+fn test_schedule_pages_include_legacy_vector_index() {
+    let (env, admin, client) = setup_env();
+    let beneficiary = Address::generate(&env);
+    client.initialize(&admin);
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(
+            &storage::DataKey::LegacyBeneficiarySchedules(beneficiary.clone()),
+            &soroban_sdk::vec![&env, 41_u32],
+        );
+    });
+
+    assert_eq!(
+        client
+            .get_schedules_by_beneficiary_page(&beneficiary, &0, &10)
+            .schedule_ids,
+        soroban_sdk::vec![&env, 41_u32]
+    );
+}
+
+#[test]
 fn test_claim_tokens() {
     let (env, admin, client) = setup_env();
     let grantor = Address::generate(&env);

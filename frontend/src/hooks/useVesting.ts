@@ -10,7 +10,7 @@
  * distinctly and a failed tx never shows success.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useWallet } from '@/components/WalletProvider'
 import {
   createSchedule as createScheduleCall,
@@ -18,8 +18,8 @@ import {
   revoke as revokeCall,
   getSchedule,
   getProgress as getProgressCall,
-  getSchedulesByGrantor,
-  getSchedulesByBeneficiary,
+  getSchedulesByGrantorPage,
+  getSchedulesByBeneficiaryPage,
   type VestingScheduleData,
   type VestingProgressData,
 } from '@/lib/vestingContract'
@@ -50,6 +50,7 @@ export interface ScheduleWithRole extends VestingScheduleData {
 }
 
 const IDLE: TxState = { phase: 'idle', message: '', hash: null, context: null }
+const PAGE_SIZE = 20
 
 const PHASE_MESSAGES: Record<Exclude<TxPhase, 'idle' | 'success' | 'failed'>, string> = {
   simulating: 'Simulating transaction…',
@@ -64,24 +65,30 @@ export function useVesting() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [txState, setTxState] = useState<TxState>(IDLE)
+  const [grantorCursor, setGrantorCursor] = useState(0)
+  const [beneficiaryCursor, setBeneficiaryCursor] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const requestId = useRef(0)
 
   const configured = isVestingContractConfigured()
 
-  const refresh = useCallback(async () => {
+  const loadPage = useCallback(async (grantorPageCursor: number, beneficiaryPageCursor: number, replace: boolean) => {
     if (!address || !configured) {
       setSchedules([])
+      setHasMore(false)
       return
     }
+    const currentRequest = ++requestId.current
     setIsLoading(true)
     setError(null)
     try {
-      const [grantorIds, beneficiaryIds] = await Promise.all([
-        getSchedulesByGrantor(address, address),
-        getSchedulesByBeneficiary(address, address),
+      const [grantorPage, beneficiaryPage] = await Promise.all([
+        getSchedulesByGrantorPage(address, address, grantorPageCursor, PAGE_SIZE),
+        getSchedulesByBeneficiaryPage(address, address, beneficiaryPageCursor, PAGE_SIZE),
       ])
-      const grantorSet = new Set(grantorIds)
-      const beneficiarySet = new Set(beneficiaryIds)
-      const allIds = Array.from(new Set([...grantorIds, ...beneficiaryIds]))
+      const grantorSet = new Set(grantorPage.scheduleIds)
+      const beneficiarySet = new Set(beneficiaryPage.scheduleIds)
+      const allIds = Array.from(new Set([...grantorPage.scheduleIds, ...beneficiaryPage.scheduleIds]))
       const fetched = await Promise.all(allIds.map((id) => getSchedule(address, id)))
       const withRole: ScheduleWithRole[] = fetched.map((s) => {
         const isGrantor = grantorSet.has(s.id)
@@ -90,14 +97,36 @@ export function useVesting() {
           isGrantor && isBeneficiary ? 'both' : isGrantor ? 'grantor' : 'beneficiary'
         return { ...s, role }
       })
-      withRole.sort((a, b) => b.id - a.id)
-      setSchedules(withRole)
+      if (currentRequest !== requestId.current) return
+      setGrantorCursor(grantorPage.nextCursor)
+      setBeneficiaryCursor(beneficiaryPage.nextCursor)
+      setHasMore(grantorPage.nextCursor !== 0 || beneficiaryPage.nextCursor !== 0)
+      setSchedules((previous) => {
+        const merged = new Map<number, ScheduleWithRole>(replace ? [] : previous.map((schedule) => [schedule.id, schedule]))
+        for (const schedule of withRole) {
+          const existing = merged.get(schedule.id)
+          const role = existing && existing.role !== schedule.role ? 'both' : schedule.role
+          merged.set(schedule.id, { ...schedule, role })
+        }
+        return Array.from(merged.values()).sort((a, b) => b.id - a.id)
+      })
     } catch (e) {
-      setError(toFriendlyVestingError(e))
+      if (currentRequest === requestId.current) setError(toFriendlyVestingError(e))
     } finally {
-      setIsLoading(false)
+      if (currentRequest === requestId.current) setIsLoading(false)
     }
   }, [address, configured])
+
+  const refresh = useCallback(async () => {
+    setGrantorCursor(0)
+    setBeneficiaryCursor(0)
+    await loadPage(0, 0, true)
+  }, [loadPage])
+
+  const loadMore = useCallback(async () => {
+    if (!hasMore || isLoading) return
+    await loadPage(grantorCursor, beneficiaryCursor, false)
+  }, [beneficiaryCursor, grantorCursor, hasMore, isLoading, loadPage])
 
   useEffect(() => {
     void refresh()
@@ -236,6 +265,8 @@ export function useVesting() {
       txState,
       resetTx,
       refresh,
+      loadMore,
+      hasMore,
       createSchedule,
       claim,
       revoke,
@@ -250,6 +281,8 @@ export function useVesting() {
       txState,
       resetTx,
       refresh,
+      loadMore,
+      hasMore,
       createSchedule,
       claim,
       revoke,

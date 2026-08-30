@@ -43,6 +43,11 @@ export interface PayrollStreamData {
   ratePerSecond: bigint
 }
 
+export interface StreamPage {
+  streamIds: number[]
+  nextCursor: number
+}
+
 const TX_TIMEOUT_SECONDS = 60
 const POLL_INTERVAL_MS = 2000
 const MAX_POLL_ATTEMPTS = 30
@@ -290,28 +295,41 @@ export async function getClaimable(sourceAccount: string, streamId: number): Pro
   return BigInt(raw ?? 0)
 }
 
-/** get_streams_by_sender -> Vec<u32>. */
-export async function getStreamsBySender(
-  sourceAccount: string,
-  sender: string,
-): Promise<number[]> {
-  const raw = await simulateRead<Array<number | bigint>>(sourceAccount, 'get_streams_by_sender', [
-    addressScVal(sender),
-  ])
-  return (raw ?? []).map((n) => Number(n))
+function decodeStreamPage(raw: Record<string, unknown>): StreamPage {
+  return {
+    streamIds: ((raw.stream_ids as Array<number | bigint>) ?? []).map((id) => Number(id)),
+    nextCursor: Number(raw.next_cursor ?? 0),
+  }
 }
 
-/** get_streams_by_recipient -> Vec<u32>. */
-export async function getStreamsByRecipient(
+/** get_streams_by_sender_page -> capped page of stream IDs. */
+export async function getStreamsBySenderPage(
+  sourceAccount: string,
+  sender: string,
+  cursor: number,
+  limit: number,
+): Promise<StreamPage> {
+  const raw = await simulateRead<Record<string, unknown>>(sourceAccount, 'get_streams_by_sender_page', [
+    addressScVal(sender),
+    nativeToScVal(cursor, { type: 'u32' }),
+    nativeToScVal(limit, { type: 'u32' }),
+  ])
+  return decodeStreamPage(raw)
+}
+
+/** get_streams_by_recipient_page -> capped page of stream IDs. */
+export async function getStreamsByRecipientPage(
   sourceAccount: string,
   recipient: string,
-): Promise<number[]> {
-  const raw = await simulateRead<Array<number | bigint>>(
+  cursor: number,
+  limit: number,
+): Promise<StreamPage> {
+  const raw = await simulateRead<Record<string, unknown>>(
     sourceAccount,
-    'get_streams_by_recipient',
-    [addressScVal(recipient)],
+    'get_streams_by_recipient_page',
+    [addressScVal(recipient), nativeToScVal(cursor, { type: 'u32' }), nativeToScVal(limit, { type: 'u32' })],
   )
-  return (raw ?? []).map((n) => Number(n))
+  return decodeStreamPage(raw)
 }
 
 /** Re-export for convenience where the testnet passphrase is needed. */

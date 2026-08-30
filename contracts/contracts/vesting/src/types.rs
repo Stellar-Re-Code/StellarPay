@@ -60,6 +60,14 @@ pub struct VestingProgress {
     pub status: VestingStatus,
 }
 
+/// A deterministic page of schedule IDs. `next_cursor` is zero at the end.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchedulePage {
+    pub schedule_ids: soroban_sdk::Vec<u32>,
+    pub next_cursor: u32,
+}
+
 /// Settlement result emitted when a vesting schedule is revoked (issue #77).
 ///
 /// Conservation invariant: `beneficiary_payout + issuer_refund + prior_claims`
