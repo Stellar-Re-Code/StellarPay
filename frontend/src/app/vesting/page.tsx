@@ -17,6 +17,8 @@ export default function VestingPage() {
     txState,
     resetTx,
     refresh,
+    loadMore,
+    hasMore,
     claim,
     revoke,
     getProgress,
@@ -68,6 +70,8 @@ export default function VestingPage() {
               txState={txState}
               resetTx={resetTx}
               refresh={refresh}
+              loadMore={loadMore}
+              hasMore={hasMore}
               getProgress={getProgress}
               onClaim={claim}
               onRevoke={revoke}

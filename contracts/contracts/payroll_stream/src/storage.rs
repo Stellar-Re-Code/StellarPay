@@ -11,10 +11,13 @@ pub enum DataKey {
     StreamCount,
     /// A specific stream by ID — stored in Persistent storage.
     Stream(u32),
-    /// List of stream IDs for a specific sender — stored in Persistent storage.
+    // Preserve deployed key names for records created before paginated indexes.
     SenderStreams(Address),
-    /// List of stream IDs for a specific recipient — stored in Persistent storage.
     RecipientStreams(Address),
+    SenderStreamCount(Address),
+    SenderStream(Address, u32),
+    RecipientStreamCount(Address),
+    RecipientStream(Address, u32),
 }
 
 // ── Admin helpers ────────────────────────────────────────────────
@@ -34,7 +37,10 @@ pub fn set_admin(env: &Env, admin: &Address) {
 // ── Stream count helpers ─────────────────────────────────────────
 
 pub fn get_stream_count(env: &Env) -> u32 {
-    env.storage().instance().get(&DataKey::StreamCount).unwrap_or(0)
+    env.storage()
+        .instance()
+        .get(&DataKey::StreamCount)
+        .unwrap_or(0)
 }
 
 pub fn set_stream_count(env: &Env, count: u32) {
@@ -52,37 +58,71 @@ pub fn set_stream(env: &Env, id: u32, stream: &PayrollStream) {
 }
 
 pub fn extend_stream_ttl(env: &Env, id: u32, threshold: u32, extend_to: u32) {
-    env.storage().persistent().extend_ttl(&DataKey::Stream(id), threshold, extend_to);
+    env.storage()
+        .persistent()
+        .extend_ttl(&DataKey::Stream(id), threshold, extend_to);
 }
 
-// ── Index helpers for sender/recipient stream lookups ────────────
+// ── Append-only sender/recipient indexes ─────────────────────────
 
-pub fn get_sender_streams(env: &Env, sender: &Address) -> Vec<u32> {
+pub fn get_legacy_sender_streams(env: &Env, sender: &Address) -> Vec<u32> {
     env.storage()
         .persistent()
         .get(&DataKey::SenderStreams(sender.clone()))
         .unwrap_or(Vec::new(env))
 }
 
-pub fn add_sender_stream(env: &Env, sender: &Address, stream_id: u32) {
-    let mut streams = get_sender_streams(env, sender);
-    streams.push_back(stream_id);
-    env.storage()
-        .persistent()
-        .set(&DataKey::SenderStreams(sender.clone()), &streams);
-}
-
-pub fn get_recipient_streams(env: &Env, recipient: &Address) -> Vec<u32> {
+pub fn get_legacy_recipient_streams(env: &Env, recipient: &Address) -> Vec<u32> {
     env.storage()
         .persistent()
         .get(&DataKey::RecipientStreams(recipient.clone()))
         .unwrap_or(Vec::new(env))
 }
 
-pub fn add_recipient_stream(env: &Env, recipient: &Address, stream_id: u32) {
-    let mut streams = get_recipient_streams(env, recipient);
-    streams.push_back(stream_id);
+pub fn get_sender_stream_count(env: &Env, sender: &Address) -> u32 {
     env.storage()
         .persistent()
-        .set(&DataKey::RecipientStreams(recipient.clone()), &streams);
+        .get(&DataKey::SenderStreamCount(sender.clone()))
+        .unwrap_or(0)
+}
+
+pub fn add_sender_stream(env: &Env, sender: &Address, stream_id: u32) {
+    let index = get_sender_stream_count(env, sender);
+    env.storage()
+        .persistent()
+        .set(&DataKey::SenderStream(sender.clone(), index), &stream_id);
+    env.storage()
+        .persistent()
+        .set(&DataKey::SenderStreamCount(sender.clone()), &(index + 1));
+}
+
+pub fn get_sender_stream_at(env: &Env, sender: &Address, index: u32) -> Option<u32> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::SenderStream(sender.clone(), index))
+}
+
+pub fn get_recipient_stream_count(env: &Env, recipient: &Address) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RecipientStreamCount(recipient.clone()))
+        .unwrap_or(0)
+}
+
+pub fn add_recipient_stream(env: &Env, recipient: &Address, stream_id: u32) {
+    let index = get_recipient_stream_count(env, recipient);
+    env.storage().persistent().set(
+        &DataKey::RecipientStream(recipient.clone(), index),
+        &stream_id,
+    );
+    env.storage().persistent().set(
+        &DataKey::RecipientStreamCount(recipient.clone()),
+        &(index + 1),
+    );
+}
+
+pub fn get_recipient_stream_at(env: &Env, recipient: &Address, index: u32) -> Option<u32> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RecipientStream(recipient.clone(), index))
 }

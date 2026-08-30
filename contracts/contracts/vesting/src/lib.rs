@@ -7,11 +7,14 @@ mod types;
 
 use errors::VestingError;
 use storage::{
-    add_beneficiary_schedule, add_grantor_schedule, get_admin, get_beneficiary_schedules,
-    get_grantor_schedules, get_schedule, get_schedule_count, has_admin, set_admin, set_schedule,
-    set_schedule_count,
+    add_beneficiary_schedule, add_grantor_schedule, get_admin, get_beneficiary_schedule_at,
+    get_beneficiary_schedule_count, get_grantor_schedule_at, get_grantor_schedule_count,
+    get_legacy_beneficiary_schedules, get_legacy_grantor_schedules, get_schedule,
+    get_schedule_count, has_admin, set_admin, set_schedule, set_schedule_count,
 };
-use types::{VestingProgress, VestingRevocation, VestingSchedule, VestingStatus};
+use types::{SchedulePage, VestingProgress, VestingRevocation, VestingSchedule, VestingStatus};
+
+const MAX_PAGE_SIZE: u32 = 50;
 
 #[contract]
 pub struct VestingContract;
@@ -319,14 +322,54 @@ impl VestingContract {
         })
     }
 
-    /// Get all schedule IDs for a grantor.
-    pub fn get_schedules_by_grantor(env: Env, grantor: Address) -> Vec<u32> {
-        get_grantor_schedules(&env, &grantor)
+    /// List grantor schedule IDs in creation order. Cursor zero starts the
+    /// index; a zero next cursor means the final page.
+    pub fn get_schedules_by_grantor_page(
+        env: Env,
+        grantor: Address,
+        cursor: u32,
+        limit: u32,
+    ) -> Result<SchedulePage, VestingError> {
+        let legacy = get_legacy_grantor_schedules(&env, &grantor);
+        let legacy_count = legacy.len();
+        Self::schedule_page(
+            &env,
+            cursor,
+            limit,
+            legacy_count + get_grantor_schedule_count(&env, &grantor),
+            |index| {
+                if index < legacy_count {
+                    legacy.get(index)
+                } else {
+                    get_grantor_schedule_at(&env, &grantor, index - legacy_count)
+                }
+            },
+        )
     }
 
-    /// Get all schedule IDs for a beneficiary.
-    pub fn get_schedules_by_beneficiary(env: Env, beneficiary: Address) -> Vec<u32> {
-        get_beneficiary_schedules(&env, &beneficiary)
+    /// List beneficiary schedule IDs in creation order. Cursor zero starts the
+    /// index; a zero next cursor means the final page.
+    pub fn get_beneficiary_schedule_page(
+        env: Env,
+        beneficiary: Address,
+        cursor: u32,
+        limit: u32,
+    ) -> Result<SchedulePage, VestingError> {
+        let legacy = get_legacy_beneficiary_schedules(&env, &beneficiary);
+        let legacy_count = legacy.len();
+        Self::schedule_page(
+            &env,
+            cursor,
+            limit,
+            legacy_count + get_beneficiary_schedule_count(&env, &beneficiary),
+            |index| {
+                if index < legacy_count {
+                    legacy.get(index)
+                } else {
+                    get_beneficiary_schedule_at(&env, &beneficiary, index - legacy_count)
+                }
+            },
+        )
     }
 
     /// Get the total number of schedules created.
@@ -355,6 +398,39 @@ impl VestingContract {
         admin.require_auth();
         env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
+    }
+
+    fn schedule_page<F>(
+        env: &Env,
+        cursor: u32,
+        limit: u32,
+        count: u32,
+        get_at: F,
+    ) -> Result<SchedulePage, VestingError>
+    where
+        F: Fn(u32) -> Option<u32>,
+    {
+        if limit == 0 {
+            return Err(VestingError::InvalidPageSize);
+        }
+        if cursor > count {
+            return Err(VestingError::InvalidCursor);
+        }
+
+        let end = core::cmp::min(
+            cursor.saturating_add(core::cmp::min(limit, MAX_PAGE_SIZE)),
+            count,
+        );
+        let mut schedule_ids = Vec::new(env);
+        let mut index = cursor;
+        while index < end {
+            schedule_ids.push_back(get_at(index).ok_or(VestingError::InvalidCursor)?);
+            index += 1;
+        }
+        Ok(SchedulePage {
+            schedule_ids,
+            next_cursor: if end == count { 0 } else { end },
+        })
     }
 }
 

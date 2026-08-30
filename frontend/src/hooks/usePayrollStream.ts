@@ -9,7 +9,7 @@
  * can render each phase distinctly and never show success for a failed tx.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useWallet } from '@/components/WalletProvider'
 import {
   createStream as createStreamCall,
@@ -17,8 +17,8 @@ import {
   cancelStream as cancelStreamCall,
   getStream,
   getClaimable as getClaimableCall,
-  getStreamsBySender,
-  getStreamsByRecipient,
+  getStreamsBySenderPage,
+  getStreamsByRecipientPage,
   type PayrollStreamData,
 } from '@/lib/payrollContract'
 import { isPayrollContractConfigured } from '@/lib/network'
@@ -48,6 +48,7 @@ export interface StreamWithRole extends PayrollStreamData {
 }
 
 const IDLE: TxState = { phase: 'idle', message: '', hash: null, context: null }
+const PAGE_SIZE = 20
 
 const PHASE_MESSAGES: Record<Exclude<TxPhase, 'idle' | 'success' | 'failed'>, string> = {
   simulating: 'Simulating transaction…',
@@ -62,24 +63,30 @@ export function usePayrollStream() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [txState, setTxState] = useState<TxState>(IDLE)
+  const [senderCursor, setSenderCursor] = useState(0)
+  const [recipientCursor, setRecipientCursor] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const requestId = useRef(0)
 
   const configured = isPayrollContractConfigured()
 
-  const refresh = useCallback(async () => {
+  const loadPage = useCallback(async (senderPageCursor: number, recipientPageCursor: number, replace: boolean) => {
     if (!address || !configured) {
       setStreams([])
+      setHasMore(false)
       return
     }
+    const currentRequest = ++requestId.current
     setIsLoading(true)
     setError(null)
     try {
-      const [sentIds, receivedIds] = await Promise.all([
-        getStreamsBySender(address, address),
-        getStreamsByRecipient(address, address),
+      const [sentPage, receivedPage] = await Promise.all([
+        getStreamsBySenderPage(address, address, senderPageCursor, PAGE_SIZE),
+        getStreamsByRecipientPage(address, address, recipientPageCursor, PAGE_SIZE),
       ])
-      const sentSet = new Set(sentIds)
-      const recvSet = new Set(receivedIds)
-      const allIds = Array.from(new Set([...sentIds, ...receivedIds]))
+      const sentSet = new Set(sentPage.streamIds)
+      const recvSet = new Set(receivedPage.streamIds)
+      const allIds = Array.from(new Set([...sentPage.streamIds, ...receivedPage.streamIds]))
       const fetched = await Promise.all(allIds.map((id) => getStream(address, id)))
       const withRole: StreamWithRole[] = fetched.map((s) => {
         const isSent = sentSet.has(s.id)
@@ -87,14 +94,36 @@ export function usePayrollStream() {
         const role: StreamWithRole['role'] = isSent && isRecv ? 'both' : isSent ? 'sent' : 'received'
         return { ...s, role }
       })
-      withRole.sort((a, b) => b.id - a.id)
-      setStreams(withRole)
+      if (currentRequest !== requestId.current) return
+      setSenderCursor(sentPage.nextCursor)
+      setRecipientCursor(receivedPage.nextCursor)
+      setHasMore(sentPage.nextCursor !== 0 || receivedPage.nextCursor !== 0)
+      setStreams((previous) => {
+        const merged = new Map<number, StreamWithRole>(replace ? [] : previous.map((stream) => [stream.id, stream]))
+        for (const stream of withRole) {
+          const existing = merged.get(stream.id)
+          const role = existing && existing.role !== stream.role ? 'both' : stream.role
+          merged.set(stream.id, { ...stream, role })
+        }
+        return Array.from(merged.values()).sort((a, b) => b.id - a.id)
+      })
     } catch (e) {
-      setError(toFriendlyError(e))
+      if (currentRequest === requestId.current) setError(toFriendlyError(e))
     } finally {
-      setIsLoading(false)
+      if (currentRequest === requestId.current) setIsLoading(false)
     }
   }, [address, configured])
+
+  const refresh = useCallback(async () => {
+    setSenderCursor(0)
+    setRecipientCursor(0)
+    await loadPage(0, 0, true)
+  }, [loadPage])
+
+  const loadMore = useCallback(async () => {
+    if (!hasMore || isLoading) return
+    await loadPage(senderCursor, recipientCursor, false)
+  }, [hasMore, isLoading, loadPage, recipientCursor, senderCursor])
 
   useEffect(() => {
     void refresh()
@@ -219,6 +248,8 @@ export function usePayrollStream() {
       txState,
       resetTx,
       refresh,
+      loadMore,
+      hasMore,
       createStream,
       claim,
       cancel,
@@ -233,6 +264,8 @@ export function usePayrollStream() {
       txState,
       resetTx,
       refresh,
+      loadMore,
+      hasMore,
       createStream,
       claim,
       cancel,

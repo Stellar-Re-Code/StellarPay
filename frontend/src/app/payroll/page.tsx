@@ -17,6 +17,8 @@ export default function PayrollPage() {
     txState,
     resetTx,
     refresh,
+    loadMore,
+    hasMore,
     claim,
     cancel,
     getClaimable,
@@ -67,6 +69,8 @@ export default function PayrollPage() {
               txState={txState}
               resetTx={resetTx}
               refresh={refresh}
+              loadMore={loadMore}
+              hasMore={hasMore}
               getClaimable={getClaimable}
               onClaim={claim}
               onCancel={cancel}

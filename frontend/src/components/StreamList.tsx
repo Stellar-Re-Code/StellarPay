@@ -20,6 +20,8 @@ interface StreamListProps {
   txState: TxState
   resetTx: () => void
   refresh: () => void
+  loadMore: () => void
+  hasMore: boolean
   getClaimable: (streamId: number) => Promise<bigint>
   onClaim: (streamId: number) => Promise<{ ok: boolean }>
   onCancel: (streamId: number) => Promise<{ ok: boolean }>
@@ -33,6 +35,8 @@ export default function StreamList({
   txState,
   resetTx,
   refresh,
+  loadMore,
+  hasMore,
   getClaimable,
   onClaim,
   onCancel,
@@ -109,17 +113,13 @@ export default function StreamList({
         ) : (
           <div className="grid gap-4">
             {list.map((stream) => (
-              <StreamCard
-                key={stream.id}
-                stream={stream}
-                account={account}
-                txState={txState}
-                resetTx={resetTx}
-                getClaimable={getClaimable}
-                onClaim={onClaim}
-                onCancel={onCancel}
-              />
+              <StreamCard key={stream.id} stream={stream} account={account} txState={txState} resetTx={resetTx} getClaimable={getClaimable} onClaim={onClaim} onCancel={onCancel} />
             ))}
+            {hasMore && (
+              <button type="button" onClick={loadMore} disabled={isLoading} className="rounded-lg border border-stellar-border px-4 py-2 text-sm text-gray-300 hover:border-stellar-primary disabled:opacity-50">
+                Load more streams
+              </button>
+            )}
           </div>
         )}
       </div>

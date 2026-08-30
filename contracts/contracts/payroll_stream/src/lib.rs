@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Env, Vec, symbol_short, token};
+use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Vec};
 
 mod errors;
 mod storage;
@@ -7,11 +7,14 @@ mod types;
 
 use errors::StreamError;
 use storage::{
-    get_admin, has_admin, set_admin, get_stream_count, set_stream_count,
-    get_stream, set_stream, extend_stream_ttl, add_sender_stream, add_recipient_stream,
-    get_sender_streams, get_recipient_streams,
+    add_recipient_stream, add_sender_stream, extend_stream_ttl, get_admin, get_recipient_stream_at,
+    get_recipient_stream_count, get_legacy_recipient_streams, get_legacy_sender_streams,
+    get_sender_stream_at, get_sender_stream_count, get_stream, get_stream_count, has_admin,
+    set_admin, set_stream, set_stream_count,
 };
-use types::{PayrollStream, StreamStatus, CreateStreamParams, CancelSettlement};
+use types::{CancelSettlement, CreateStreamParams, PayrollStream, StreamPage, StreamStatus};
+
+const MAX_PAGE_SIZE: u32 = 50;
 
 #[contract]
 pub struct PayrollStreamContract;
@@ -27,10 +30,8 @@ impl PayrollStreamContract {
         set_admin(&env, &admin);
         set_stream_count(&env, 0);
 
-        env.events().publish(
-            (symbol_short!("init"), 1u32),
-            admin.clone(),
-        );
+        env.events()
+            .publish((symbol_short!("init"), 1u32), admin.clone());
 
         Ok(())
     }
@@ -80,17 +81,19 @@ impl PayrollStreamContract {
         };
 
         // Transfer total_amount from sender to contract (contributor task SC-10)
-        token::Client::new(&env, &token).transfer(&sender, &env.current_contract_address(), &total_amount);
+        token::Client::new(&env, &token).transfer(
+            &sender,
+            &env.current_contract_address(),
+            &total_amount,
+        );
 
         set_stream(&env, stream_id, &stream);
         set_stream_count(&env, stream_id + 1);
         add_sender_stream(&env, &sender, stream_id);
         add_recipient_stream(&env, &recipient, stream_id);
 
-        env.events().publish(
-            (symbol_short!("s_create"), 1u32, sender.clone()),
-            stream_id,
-        );
+        env.events()
+            .publish((symbol_short!("s_create"), 1u32, sender.clone()), stream_id);
 
         Ok(stream_id)
     }
@@ -111,7 +114,7 @@ impl PayrollStreamContract {
         if batch_size > 50 {
             return Err(StreamError::BatchTooLarge);
         }
-        
+
         let mut token_totals: soroban_sdk::Map<Address, i128> = soroban_sdk::Map::new(&env);
         let mut seen_recipients = Vec::new(&env);
 
@@ -139,7 +142,9 @@ impl PayrollStreamContract {
             }
 
             let current_total = token_totals.get(token.clone()).unwrap_or(0);
-            let new_total = current_total.checked_add(total_amount).ok_or(StreamError::ArithmeticOverflow)?;
+            let new_total = current_total
+                .checked_add(total_amount)
+                .ok_or(StreamError::ArithmeticOverflow)?;
             token_totals.set(token.clone(), new_total);
         }
 
@@ -181,12 +186,10 @@ impl PayrollStreamContract {
             set_stream(&env, stream_id, &stream);
             add_sender_stream(&env, &sender, stream_id);
             add_recipient_stream(&env, &recipient, stream_id);
-            
-            env.events().publish(
-                (symbol_short!("s_create"), 1u32, sender.clone()),
-                stream_id,
-            );
-            
+
+            env.events()
+                .publish((symbol_short!("s_create"), 1u32, sender.clone()), stream_id);
+
             stream_ids.push_back(stream_id);
             count += 1;
         }
@@ -209,8 +212,7 @@ impl PayrollStreamContract {
         }
         recipient.require_auth();
 
-        let mut stream = get_stream(&env, stream_id)
-            .ok_or(StreamError::StreamNotFound)?;
+        let mut stream = get_stream(&env, stream_id).ok_or(StreamError::StreamNotFound)?;
 
         if stream.recipient != recipient {
             return Err(StreamError::Unauthorized);
@@ -237,15 +239,16 @@ impl PayrollStreamContract {
         }
 
         // Transfer claimable tokens to recipient (contributor task SC-11)
-        token::Client::new(&env, &stream.token)
-            .transfer(&env.current_contract_address(), &recipient, &claimable);
+        token::Client::new(&env, &stream.token).transfer(
+            &env.current_contract_address(),
+            &recipient,
+            &claimable,
+        );
 
         set_stream(&env, stream_id, &stream);
 
-        env.events().publish(
-            (symbol_short!("claim"), 1u32, recipient.clone()),
-            claimable,
-        );
+        env.events()
+            .publish((symbol_short!("claim"), 1u32, recipient.clone()), claimable);
 
         Ok(claimable)
     }
@@ -262,8 +265,7 @@ impl PayrollStreamContract {
         }
         sender.require_auth();
 
-        let mut stream = get_stream(&env, stream_id)
-            .ok_or(StreamError::StreamNotFound)?;
+        let mut stream = get_stream(&env, stream_id).ok_or(StreamError::StreamNotFound)?;
 
         if stream.sender != sender {
             return Err(StreamError::Unauthorized);
@@ -295,7 +297,7 @@ impl PayrollStreamContract {
         }
 
         set_stream(&env, stream_id, &stream);
-        
+
         // Extend TTL (approximately 30 days of ledgers: 17280 * 30)
         extend_stream_ttl(&env, stream_id, 17280 * 30, 17280 * 30);
 
@@ -335,9 +337,9 @@ impl PayrollStreamContract {
         let elapsed = effective_time - stream.start_time;
         // Check if stream is completed to avoid division by zero (though duration checked at creation)
         if stream.end_time <= stream.start_time {
-             return 0; 
+            return 0;
         }
-        
+
         // Recalculate based on total amount and duration to minimize rounding errors
         // Instead of using stored rate_per_second which might have rounding loss
         let duration = stream.end_time - stream.start_time;
@@ -349,7 +351,7 @@ impl PayrollStreamContract {
         } else {
             total_accrued
         };
-        
+
         // Ensure we don't return negative claimable if something is wrong with state
         if total_accrued < stream.claimed_amount {
             return 0;
@@ -367,8 +369,7 @@ impl PayrollStreamContract {
 
     /// Get the claimable balance for a stream at the current time.
     pub fn get_claimable(env: Env, stream_id: u32) -> Result<i128, StreamError> {
-        let stream = get_stream(&env, stream_id)
-            .ok_or(StreamError::StreamNotFound)?;
+        let stream = get_stream(&env, stream_id).ok_or(StreamError::StreamNotFound)?;
         Ok(Self::calculate_claimable(&env, &stream))
     }
 
@@ -377,14 +378,54 @@ impl PayrollStreamContract {
         get_stream_count(&env)
     }
 
-    /// Get all stream IDs created by a sender.
-    pub fn get_streams_by_sender(env: Env, sender: Address) -> Vec<u32> {
-        get_sender_streams(&env, &sender)
+    /// List sender stream IDs in creation order. Cursor zero starts the index;
+    /// a zero next cursor means the final page.
+    pub fn get_streams_by_sender_page(
+        env: Env,
+        sender: Address,
+        cursor: u32,
+        limit: u32,
+    ) -> Result<StreamPage, StreamError> {
+        let legacy = get_legacy_sender_streams(&env, &sender);
+        let legacy_count = legacy.len();
+        Self::stream_page(
+            &env,
+            cursor,
+            limit,
+            legacy_count + get_sender_stream_count(&env, &sender),
+            |index| {
+                if index < legacy_count {
+                    legacy.get(index)
+                } else {
+                    get_sender_stream_at(&env, &sender, index - legacy_count)
+                }
+            },
+        )
     }
 
-    /// Get all stream IDs where the address is a recipient.
-    pub fn get_streams_by_recipient(env: Env, recipient: Address) -> Vec<u32> {
-        get_recipient_streams(&env, &recipient)
+    /// List recipient stream IDs in creation order. Cursor zero starts the
+    /// index; a zero next cursor means the final page.
+    pub fn get_streams_by_recipient_page(
+        env: Env,
+        recipient: Address,
+        cursor: u32,
+        limit: u32,
+    ) -> Result<StreamPage, StreamError> {
+        let legacy = get_legacy_recipient_streams(&env, &recipient);
+        let legacy_count = legacy.len();
+        Self::stream_page(
+            &env,
+            cursor,
+            limit,
+            legacy_count + get_recipient_stream_count(&env, &recipient),
+            |index| {
+                if index < legacy_count {
+                    legacy.get(index)
+                } else {
+                    get_recipient_stream_at(&env, &recipient, index - legacy_count)
+                }
+            },
+        )
     }
 
     /// Get the admin address.
@@ -396,7 +437,11 @@ impl PayrollStreamContract {
     }
 
     /// Upgrade the contract WASM. Restricted to admin.
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), StreamError> {
+    pub fn upgrade(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), StreamError> {
         let stored_admin = get_admin(&env);
         if admin != stored_admin {
             return Err(StreamError::Unauthorized);
@@ -405,8 +450,41 @@ impl PayrollStreamContract {
         env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
+
+    fn stream_page<F>(
+        env: &Env,
+        cursor: u32,
+        limit: u32,
+        count: u32,
+        get_at: F,
+    ) -> Result<StreamPage, StreamError>
+    where
+        F: Fn(u32) -> Option<u32>,
+    {
+        if limit == 0 {
+            return Err(StreamError::InvalidPageSize);
+        }
+        if cursor > count {
+            return Err(StreamError::InvalidCursor);
+        }
+
+        let end = core::cmp::min(
+            cursor.saturating_add(core::cmp::min(limit, MAX_PAGE_SIZE)),
+            count,
+        );
+        let mut stream_ids = Vec::new(env);
+        let mut index = cursor;
+        while index < end {
+            stream_ids.push_back(get_at(index).ok_or(StreamError::InvalidCursor)?);
+            index += 1;
+        }
+        Ok(StreamPage {
+            stream_ids,
+            next_cursor: if end == count { 0 } else { end },
+        })
+    }
 }
 
 mod test;
-mod test_sentinel_auth;
 mod test_properties;
+mod test_sentinel_auth;

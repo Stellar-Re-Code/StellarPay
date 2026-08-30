@@ -54,6 +54,14 @@ pub struct StreamSummary {
     pub status: StreamStatus,
 }
 
+/// A deterministic page of stream IDs. `next_cursor` is zero at the end.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamPage {
+    pub stream_ids: soroban_sdk::Vec<u32>,
+    pub next_cursor: u32,
+}
+
 /// Parameters for creating a single stream in a batch.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]

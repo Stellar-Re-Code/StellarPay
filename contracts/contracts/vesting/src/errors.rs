@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror};
+use soroban_sdk::contracterror;
 
 /// Error codes for the Vesting contract.
 #[contracterror]
@@ -17,4 +17,6 @@ pub enum VestingError {
     AlreadyFullyClaimed = 10,
     InvalidCliffDuration = 11,
     InsufficientBalance = 12,
+    InvalidCursor = 13,
+    InvalidPageSize = 14,
 }
