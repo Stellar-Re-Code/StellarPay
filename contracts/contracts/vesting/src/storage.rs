@@ -8,9 +8,9 @@ pub enum DataKey {
     Admin,
     ScheduleCount,
     Schedule(u32),
-    // Keep these discriminants for schedules written before paginated indexes.
-    LegacyGrantorSchedules(Address),
-    LegacyBeneficiarySchedules(Address),
+    // Preserve deployed key names for schedules written before paginated indexes.
+    GrantorSchedules(Address),
+    BeneficiarySchedules(Address),
     GrantorScheduleCount(Address),
     GrantorSchedule(Address, u32),
     BeneficiaryScheduleCount(Address),
@@ -63,14 +63,14 @@ pub fn set_schedule(env: &Env, id: u32, schedule: &VestingSchedule) {
 pub fn get_legacy_grantor_schedules(env: &Env, grantor: &Address) -> Vec<u32> {
     env.storage()
         .persistent()
-        .get(&DataKey::LegacyGrantorSchedules(grantor.clone()))
+        .get(&DataKey::GrantorSchedules(grantor.clone()))
         .unwrap_or(Vec::new(env))
 }
 
 pub fn get_legacy_beneficiary_schedules(env: &Env, beneficiary: &Address) -> Vec<u32> {
     env.storage()
         .persistent()
-        .get(&DataKey::LegacyBeneficiarySchedules(beneficiary.clone()))
+        .get(&DataKey::BeneficiarySchedules(beneficiary.clone()))
         .unwrap_or(Vec::new(env))
 }
 

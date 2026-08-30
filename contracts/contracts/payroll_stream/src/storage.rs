@@ -11,9 +11,9 @@ pub enum DataKey {
     StreamCount,
     /// A specific stream by ID — stored in Persistent storage.
     Stream(u32),
-    // Keep these discriminants for records created before paginated indexes.
-    LegacySenderStreams(Address),
-    LegacyRecipientStreams(Address),
+    // Preserve deployed key names for records created before paginated indexes.
+    SenderStreams(Address),
+    RecipientStreams(Address),
     SenderStreamCount(Address),
     SenderStream(Address, u32),
     RecipientStreamCount(Address),
@@ -68,14 +68,14 @@ pub fn extend_stream_ttl(env: &Env, id: u32, threshold: u32, extend_to: u32) {
 pub fn get_legacy_sender_streams(env: &Env, sender: &Address) -> Vec<u32> {
     env.storage()
         .persistent()
-        .get(&DataKey::LegacySenderStreams(sender.clone()))
+        .get(&DataKey::SenderStreams(sender.clone()))
         .unwrap_or(Vec::new(env))
 }
 
 pub fn get_legacy_recipient_streams(env: &Env, recipient: &Address) -> Vec<u32> {
     env.storage()
         .persistent()
-        .get(&DataKey::LegacyRecipientStreams(recipient.clone()))
+        .get(&DataKey::RecipientStreams(recipient.clone()))
         .unwrap_or(Vec::new(env))
 }
 

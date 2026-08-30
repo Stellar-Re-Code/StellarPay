@@ -821,13 +821,16 @@ fn test_stream_pages_include_legacy_vector_index() {
     client.initialize(&admin);
     env.as_contract(&client.address, || {
         env.storage().persistent().set(
-            &storage::DataKey::LegacySenderStreams(sender.clone()),
+            // Simulates a vector persisted by the pre-pagination contract.
+            &storage::DataKey::SenderStreams(sender.clone()),
             &soroban_sdk::vec![&env, 41_u32],
         );
     });
 
     assert_eq!(
-        client.get_streams_by_sender_page(&sender, &0, &10).stream_ids,
+        client
+            .get_streams_by_sender_page(&sender, &0, &10)
+            .stream_ids,
         soroban_sdk::vec![&env, 41_u32]
     );
 }

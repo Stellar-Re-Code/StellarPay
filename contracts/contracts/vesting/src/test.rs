@@ -81,7 +81,7 @@ fn test_schedule_pages_cover_empty_boundaries_and_invalid_cursors() {
     token.mint(&grantor, &10_000);
     client.initialize(&admin);
 
-    let empty = client.get_schedules_by_beneficiary_page(&beneficiary, &0, &2);
+    let empty = client.get_beneficiary_schedule_page(&beneficiary, &0, &2);
     assert_eq!(empty.schedule_ids.len(), 0);
     assert_eq!(empty.next_cursor, 0);
 
@@ -100,29 +100,28 @@ fn test_schedule_pages_cover_empty_boundaries_and_invalid_cursors() {
         );
     }
 
-    let first = client.get_schedules_by_beneficiary_page(&beneficiary, &0, &2);
+    let first = client.get_beneficiary_schedule_page(&beneficiary, &0, &2);
     assert_eq!(first.schedule_ids, soroban_sdk::vec![&env, 0, 1]);
     assert_eq!(first.next_cursor, 2);
-    let middle = client.get_schedules_by_beneficiary_page(&beneficiary, &first.next_cursor, &2);
+    let middle = client.get_beneficiary_schedule_page(&beneficiary, &first.next_cursor, &2);
     assert_eq!(middle.schedule_ids, soroban_sdk::vec![&env, 2, 3]);
     assert_eq!(middle.next_cursor, 4);
-    let final_page =
-        client.get_schedules_by_beneficiary_page(&beneficiary, &middle.next_cursor, &50);
+    let final_page = client.get_beneficiary_schedule_page(&beneficiary, &middle.next_cursor, &50);
     assert_eq!(final_page.schedule_ids, soroban_sdk::vec![&env, 4]);
     assert_eq!(final_page.next_cursor, 0);
 
     assert_eq!(
         client
-            .get_schedules_by_beneficiary_page(&beneficiary, &5, &2)
+            .get_beneficiary_schedule_page(&beneficiary, &5, &2)
             .schedule_ids
             .len(),
         0
     );
     assert!(client
-        .try_get_schedules_by_beneficiary_page(&beneficiary, &6, &2)
+        .try_get_beneficiary_schedule_page(&beneficiary, &6, &2)
         .is_err());
     assert!(client
-        .try_get_schedules_by_beneficiary_page(&beneficiary, &0, &0)
+        .try_get_beneficiary_schedule_page(&beneficiary, &0, &0)
         .is_err());
 }
 
@@ -133,14 +132,15 @@ fn test_schedule_pages_include_legacy_vector_index() {
     client.initialize(&admin);
     env.as_contract(&client.address, || {
         env.storage().persistent().set(
-            &storage::DataKey::LegacyBeneficiarySchedules(beneficiary.clone()),
+            // Simulates a vector persisted by the pre-pagination contract.
+            &storage::DataKey::BeneficiarySchedules(beneficiary.clone()),
             &soroban_sdk::vec![&env, 41_u32],
         );
     });
 
     assert_eq!(
         client
-            .get_schedules_by_beneficiary_page(&beneficiary, &0, &10)
+            .get_beneficiary_schedule_page(&beneficiary, &0, &10)
             .schedule_ids,
         soroban_sdk::vec![&env, 41_u32]
     );

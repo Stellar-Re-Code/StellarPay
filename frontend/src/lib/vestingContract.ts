@@ -337,7 +337,7 @@ export async function getSchedulesByGrantorPage(
   return decodeSchedulePage(raw)
 }
 
-/** get_schedules_by_beneficiary_page -> capped page of schedule IDs. */
+/** get_beneficiary_schedule_page -> capped page of schedule IDs. */
 export async function getSchedulesByBeneficiaryPage(
   sourceAccount: string,
   beneficiary: string,
@@ -346,7 +346,7 @@ export async function getSchedulesByBeneficiaryPage(
 ): Promise<SchedulePage> {
   const raw = await simulateRead<Record<string, unknown>>(
     sourceAccount,
-    'get_schedules_by_beneficiary_page',
+    'get_beneficiary_schedule_page',
     [addressScVal(beneficiary), nativeToScVal(cursor, { type: 'u32' }), nativeToScVal(limit, { type: 'u32' })],
   )
   return decodeSchedulePage(raw)

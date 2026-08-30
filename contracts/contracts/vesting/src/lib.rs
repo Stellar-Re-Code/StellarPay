@@ -349,7 +349,7 @@ impl VestingContract {
 
     /// List beneficiary schedule IDs in creation order. Cursor zero starts the
     /// index; a zero next cursor means the final page.
-    pub fn get_schedules_by_beneficiary_page(
+    pub fn get_beneficiary_schedule_page(
         env: Env,
         beneficiary: Address,
         cursor: u32,
