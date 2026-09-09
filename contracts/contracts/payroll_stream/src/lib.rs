@@ -7,10 +7,10 @@ mod types;
 
 use errors::StreamError;
 use storage::{
-    add_recipient_stream, add_sender_stream, extend_stream_ttl, get_admin, get_recipient_stream_at,
-    get_recipient_stream_count, get_legacy_recipient_streams, get_legacy_sender_streams,
-    get_sender_stream_at, get_sender_stream_count, get_stream, get_stream_count, has_admin,
-    set_admin, set_stream, set_stream_count,
+    add_recipient_stream, add_sender_stream, extend_stream_ttl, get_admin,
+    get_legacy_recipient_streams, get_legacy_sender_streams, get_recipient_stream_at,
+    get_recipient_stream_count, get_sender_stream_at, get_sender_stream_count, get_stream,
+    get_stream_count, has_admin, set_admin, set_stream, set_stream_count,
 };
 use types::{CancelSettlement, CreateStreamParams, PayrollStream, StreamPage, StreamStatus};
 
@@ -224,12 +224,15 @@ impl PayrollStreamContract {
             return Err(StreamError::StreamCompleted);
         }
 
-        let claimable = Self::calculate_claimable(&env, &stream);
+        let claimable = Self::calculate_claimable(&env, &stream)?;
         if claimable <= 0 {
             return Err(StreamError::NothingToClaim);
         }
 
-        stream.claimed_amount += claimable;
+        stream.claimed_amount = stream
+            .claimed_amount
+            .checked_add(claimable)
+            .ok_or(StreamError::ArithmeticOverflow)?;
         let now = env.ledger().timestamp();
         stream.last_claim_time = now;
 
@@ -278,11 +281,18 @@ impl PayrollStreamContract {
         }
 
         // Calculate what recipient is owed up to now
-        let claimable = Self::calculate_claimable(&env, &stream);
-        let refund = stream.total_amount - stream.claimed_amount - claimable;
+        let claimable = Self::calculate_claimable(&env, &stream)?;
+        let refund = stream
+            .total_amount
+            .checked_sub(stream.claimed_amount)
+            .and_then(|remaining| remaining.checked_sub(claimable))
+            .ok_or(StreamError::ArithmeticOverflow)?;
 
         // Set claimed/settled accounting
-        stream.claimed_amount += claimable;
+        stream.claimed_amount = stream
+            .claimed_amount
+            .checked_add(claimable)
+            .ok_or(StreamError::ArithmeticOverflow)?;
         stream.last_claim_time = env.ledger().timestamp();
         stream.status = StreamStatus::Cancelled;
 
@@ -321,11 +331,11 @@ impl PayrollStreamContract {
     // ── Internal Helpers ─────────────────────────────────────────
 
     /// Calculate the amount of tokens claimable by the recipient at the current time.
-    fn calculate_claimable(env: &Env, stream: &PayrollStream) -> i128 {
+    fn calculate_claimable(env: &Env, stream: &PayrollStream) -> Result<i128, StreamError> {
         let now = env.ledger().timestamp();
 
         if now <= stream.start_time {
-            return 0;
+            return Ok(0);
         }
 
         let effective_time = if now >= stream.end_time {
@@ -337,13 +347,17 @@ impl PayrollStreamContract {
         let elapsed = effective_time - stream.start_time;
         // Check if stream is completed to avoid division by zero (though duration checked at creation)
         if stream.end_time <= stream.start_time {
-            return 0;
+            return Ok(0);
         }
 
         // Recalculate based on total amount and duration to minimize rounding errors
         // Instead of using stored rate_per_second which might have rounding loss
         let duration = stream.end_time - stream.start_time;
-        let total_accrued = (stream.total_amount * (elapsed as i128)) / (duration as i128);
+        let total_accrued = stream
+            .total_amount
+            .checked_mul(elapsed as i128)
+            .ok_or(StreamError::ArithmeticOverflow)?
+            / (duration as i128);
 
         // Clamp to total_amount
         let total_accrued = if total_accrued > stream.total_amount {
@@ -354,10 +368,12 @@ impl PayrollStreamContract {
 
         // Ensure we don't return negative claimable if something is wrong with state
         if total_accrued < stream.claimed_amount {
-            return 0;
+            return Ok(0);
         }
 
-        total_accrued - stream.claimed_amount
+        total_accrued
+            .checked_sub(stream.claimed_amount)
+            .ok_or(StreamError::ArithmeticOverflow)
     }
 
     // ── Query Functions ──────────────────────────────────────────
@@ -370,7 +386,7 @@ impl PayrollStreamContract {
     /// Get the claimable balance for a stream at the current time.
     pub fn get_claimable(env: Env, stream_id: u32) -> Result<i128, StreamError> {
         let stream = get_stream(&env, stream_id).ok_or(StreamError::StreamNotFound)?;
-        Ok(Self::calculate_claimable(&env, &stream))
+        Self::calculate_claimable(&env, &stream)
     }
 
     /// Get the total number of streams created.

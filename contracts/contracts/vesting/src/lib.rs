@@ -136,14 +136,19 @@ impl VestingContract {
             return Err(VestingError::AlreadyFullyClaimed);
         }
 
-        let vested = Self::calculate_vested(&env, &schedule);
-        let claimable = vested - schedule.claimed_amount;
+        let vested = Self::calculate_vested(&env, &schedule)?;
+        let claimable = vested
+            .checked_sub(schedule.claimed_amount)
+            .ok_or(VestingError::ArithmeticOverflow)?;
 
         if claimable <= 0 {
             return Err(VestingError::NothingToClaim);
         }
 
-        schedule.claimed_amount += claimable;
+        schedule.claimed_amount = schedule
+            .claimed_amount
+            .checked_add(claimable)
+            .ok_or(VestingError::ArithmeticOverflow)?;
 
         if schedule.claimed_amount >= schedule.total_amount {
             schedule.status = VestingStatus::FullyClaimed;
@@ -208,7 +213,7 @@ impl VestingContract {
 
         let prior_claims = schedule.claimed_amount;
         let original_escrow = schedule.total_amount;
-        let vested = Self::calculate_vested(&env, &schedule);
+        let vested = Self::calculate_vested(&env, &schedule)?;
 
         // Checked arithmetic: vested can never exceed total_amount by
         // construction of calculate_vested, but keep the subtraction explicit.
@@ -268,35 +273,43 @@ impl VestingContract {
     /// floor division — truncation toward zero. Any truncation dust stays
     /// with the issuer's revocation refund; it is never taken out of the
     /// beneficiary's entitlement.
-    fn calculate_vested(env: &Env, schedule: &VestingSchedule) -> i128 {
+    fn calculate_vested(env: &Env, schedule: &VestingSchedule) -> Result<i128, VestingError> {
         let now = env.ledger().timestamp();
 
         if now < schedule.start_time {
-            return 0;
+            return Ok(0);
         }
 
         let elapsed = now - schedule.start_time;
 
         // Before cliff: nothing is vested
         if elapsed < schedule.cliff_duration {
-            return 0;
+            return Ok(0);
         }
 
         // After full duration: everything is vested
         if elapsed >= schedule.total_duration {
-            return schedule.total_amount;
+            return Ok(schedule.total_amount);
         }
 
         // Cliff amount vests immediately at cliff
         // Remaining amount (total - cliff_amount) vests linearly from cliff_duration to total_duration
-        let remaining_amount = schedule.total_amount - schedule.cliff_amount;
+        let remaining_amount = schedule
+            .total_amount
+            .checked_sub(schedule.cliff_amount)
+            .ok_or(VestingError::ArithmeticOverflow)?;
         let vesting_duration = schedule.total_duration - schedule.cliff_duration;
         let time_since_cliff = elapsed - schedule.cliff_duration;
 
-        let vested_linear =
-            (remaining_amount * (time_since_cliff as i128)) / (vesting_duration as i128);
+        let vested_linear = remaining_amount
+            .checked_mul(time_since_cliff as i128)
+            .ok_or(VestingError::ArithmeticOverflow)?
+            / (vesting_duration as i128);
 
-        schedule.cliff_amount + vested_linear
+        schedule
+            .cliff_amount
+            .checked_add(vested_linear)
+            .ok_or(VestingError::ArithmeticOverflow)
     }
 
     // ── Query Functions ──────────────────────────────────────────
@@ -310,8 +323,10 @@ impl VestingContract {
     pub fn get_progress(env: Env, schedule_id: u32) -> Result<VestingProgress, VestingError> {
         let schedule = get_schedule(&env, schedule_id).ok_or(VestingError::ScheduleNotFound)?;
 
-        let vested = Self::calculate_vested(&env, &schedule);
-        let claimable = vested - schedule.claimed_amount;
+        let vested = Self::calculate_vested(&env, &schedule)?;
+        let claimable = vested
+            .checked_sub(schedule.claimed_amount)
+            .ok_or(VestingError::ArithmeticOverflow)?;
 
         Ok(VestingProgress {
             total_amount: schedule.total_amount,

@@ -19,4 +19,5 @@ pub enum VestingError {
     InsufficientBalance = 12,
     InvalidCursor = 13,
     InvalidPageSize = 14,
+    ArithmeticOverflow = 15,
 }
