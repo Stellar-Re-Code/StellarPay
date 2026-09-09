@@ -1,9 +1,11 @@
 import { db, initDb } from '../src/db';
 
+const mockGetEvents = jest.fn();
+
 jest.mock('@stellar/stellar-sdk', () => ({
   rpc: {
     Server: jest.fn().mockImplementation(() => ({
-      getEvents: jest.fn().mockResolvedValue({ events: [] }),
+      getEvents: mockGetEvents,
       getLatestLedger: jest.fn().mockResolvedValue({ sequence: 1000 })
     }))
   },
@@ -35,6 +37,8 @@ describe('Indexer & Reconciler', () => {
   });
 
   beforeEach(async () => {
+    mockGetEvents.mockReset();
+    mockGetEvents.mockResolvedValue({ events: [], cursor: 'cursor-0' });
     await db.run('DELETE FROM streams');
     await db.run('DELETE FROM cursor');
     await db.run('DELETE FROM discrepancies');
@@ -64,6 +68,30 @@ describe('Indexer & Reconciler', () => {
     const streams: any = await db.all('SELECT * FROM streams');
     expect(streams.length).toBe(1);
     expect(streams[0].stream_id).toBe('s1');
+  });
+
+  it('exhausts every event page before completing a ledger range', async () => {
+    const createEvent = (streamId: string) => ({
+      topic: [{ toXDR: () => 's_create', value: 's_create' }],
+      value: {
+        stream_id: streamId,
+        sender: 'alice',
+        recipient: 'bob',
+        amount: '100',
+        token: 'USDC',
+        start_time: 10,
+        end_time: 20,
+      },
+    });
+    mockGetEvents
+      .mockResolvedValueOnce({ events: Array.from({ length: 100 }, (_, i) => createEvent(`s${i}`)), cursor: 'page-2' })
+      .mockResolvedValueOnce({ events: [createEvent('s100')], cursor: 'done' });
+
+    await indexer.processLedgerRange(10, 20);
+
+    expect(mockGetEvents).toHaveBeenNthCalledWith(1, expect.objectContaining({ startLedger: 10, endLedger: 20 }));
+    expect(mockGetEvents).toHaveBeenNthCalledWith(2, expect.objectContaining({ cursor: 'page-2' }));
+    expect((await db.all('SELECT * FROM streams'))).toHaveLength(101);
   });
 
   it('reconciler flags discrepancy', async () => {

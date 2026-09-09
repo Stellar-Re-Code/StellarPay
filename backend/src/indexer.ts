@@ -45,23 +45,40 @@ export class Indexer {
   }
 
   async processLedgerRange(start: number, end: number) {
-    const response = await this.rpcServer.getEvents({
+    const filters = [
+      {
+        type: 'contract' as const,
+        contractIds: [this.contractId],
+        topics: [
+          [xdr.ScVal.scvSymbol('s_create').toXDR('base64')],
+          [xdr.ScVal.scvSymbol('claim').toXDR('base64')],
+          [xdr.ScVal.scvSymbol('cancel').toXDR('base64')]
+        ]
+      }
+    ];
+    let response = await this.rpcServer.getEvents({
       startLedger: start,
-      filters: [
-        {
-          type: 'contract',
-          contractIds: [this.contractId],
-          topics: [
-             [xdr.ScVal.scvSymbol('s_create').toXDR('base64')],
-             [xdr.ScVal.scvSymbol('claim').toXDR('base64')],
-             [xdr.ScVal.scvSymbol('cancel').toXDR('base64')]
-          ]
-        }
-      ],
+      endLedger: end,
+      filters,
       limit: 100
     });
 
-    for (const event of response.events) {
+    while (true) {
+      await this.processEvents(response.events);
+      if (response.events.length < 100) {
+        return;
+      }
+
+      response = await this.rpcServer.getEvents({
+        cursor: response.cursor,
+        filters,
+        limit: 100
+      });
+    }
+  }
+
+  private async processEvents(events: Awaited<ReturnType<rpc.Server['getEvents']>>['events']) {
+    for (const event of events) {
       // Decode topic
       const topicVals = event.topic.map((t: any) => t.toXDR ? t : xdr.ScVal.fromXDR(t as string, 'base64'));
       const eventName = scValToNative(topicVals[0]);
