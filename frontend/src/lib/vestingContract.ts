@@ -288,9 +288,38 @@ export async function revoke(
   scheduleId: number,
   handlers?: InvokeHandlers,
 ): Promise<InvokeResult<bigint>> {
-  const args = [addressScVal(grantor), nativeToScVal(scheduleId, { type: 'u32' })]
-  const result = await invokeContract<bigint>(grantor, 'revoke', args, handlers)
-  return { hash: result.hash, returnValue: BigInt(result.returnValue ?? 0) }
+  const args = [
+    addressScVal(grantor),
+    nativeToScVal(scheduleId, { type: 'u32' }),
+  ]
+
+  const result = await invokeContract<unknown>(
+    grantor,
+    'revoke',
+    args,
+    handlers,
+  )
+
+  if (!Array.isArray(result.returnValue) || result.returnValue[0] !== 'Ok') {
+    throw new Error('Schedule revocation was rejected by the contract.')
+  }
+
+  const revocation = result.returnValue[1] as {
+    schedule_id?: number
+    issuer_refund?: bigint | number
+  }
+
+  if (
+    revocation.schedule_id !== undefined &&
+    revocation.schedule_id !== scheduleId
+  ) {
+    throw new Error('Invalid revocation result returned by the contract.')
+  }
+
+  return {
+    hash: result.hash,
+    returnValue: BigInt(revocation.issuer_refund ?? 0),
+  }
 }
 
 /** get_schedule -> full VestingSchedule. */
