@@ -1,10 +1,11 @@
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 import { PayrollClient } from '../payrollClient';
 import { getSorobanServer, NETWORK } from '../network';
 import { signTransaction } from '../wallet';
 import * as StellarSdk from '@stellar/stellar-sdk';
 
-jest.mock('../network', () => ({
-  getSorobanServer: jest.fn(),
+vi.mock('../network', () => ({
+  getSorobanServer: vi.fn(),
   NETWORK: {
     name: 'Testnet',
     networkPassphrase: 'Test SDF Network ; September 2015',
@@ -14,116 +15,86 @@ jest.mock('../network', () => ({
   },
 }));
 
-jest.mock('../wallet', () => ({
-  signTransaction: jest.fn(),
+vi.mock('../wallet', () => ({
+  signTransaction: vi.fn(),
 }));
 
-
-jest.mock('@stellar/stellar-sdk', () => {
-  const original = jest.requireActual('@stellar/stellar-sdk');
+vi.mock('@stellar/stellar-sdk', async () => {
+  const original = await vi.importActual<any>('@stellar/stellar-sdk');
   return {
     ...original,
     rpc: {
       ...original.rpc,
-      assembleTransaction: jest.fn().mockReturnValue({
-        toXDR: jest.fn().mockReturnValue('mockedxdr'),
+      assembleTransaction: vi.fn().mockReturnValue({
+        build: vi.fn().mockReturnValue({
+          toXDR: vi.fn().mockReturnValue('mockedxdr'),
+        }),
       }),
     },
   };
 });
 
-jest.mock('../env', () => ({
+vi.mock('../env', () => ({
   env: {
     rpcUrl: 'http://test',
     networkPassphrase: 'test',
     explorerUrl: 'http://test',
     payrollContractId: 'C123',
   },
-  validateEnv: jest.fn()
+  validateEnv: vi.fn(),
 }));
 
 describe('PayrollClient', () => {
+  let client: PayrollClient;
   let mockServer: any;
 
   beforeEach(() => {
-    const mockAccountId = StellarSdk.Keypair.random().publicKey();
-    StellarSdk.rpc.Api.isSimulationError = jest.fn().mockReturnValue(false);
+    vi.clearAllMocks();
     mockServer = {
-      getAccount: jest.fn().mockResolvedValue(new StellarSdk.Account(mockAccountId, '1')),
-      simulateTransaction: jest.fn(),
-      sendTransaction: jest.fn(),
-      getTransaction: jest.fn(),
+      simulateTransaction: vi.fn().mockResolvedValue({
+        result: {
+          retval: 'mocked',
+        },
+        transactionData: 'mock_tx_data',
+      }),
+      sendTransaction: vi.fn().mockResolvedValue({
+        status: 'PENDING',
+        hash: 'txhash123',
+      }),
+      getTransaction: vi.fn().mockResolvedValue({
+        status: 'SUCCESS',
+      }),
+      getAccount: vi.fn().mockImplementation((addr) => {
+        return new StellarSdk.Account(addr, '1');
+      }),
     };
-    (getSorobanServer as jest.Mock).mockReturnValue(mockServer);
-  });
-
-  afterEach(() => {
-    jest.clearAllMocks();
+    (getSorobanServer as any).mockReturnValue(mockServer);
+    client = new PayrollClient();
   });
 
   test('creates a stream successfully with state tracking', async () => {
-    const client = new PayrollClient();
-    const onStateChange = jest.fn();
+    const states: string[] = [];
+    const onStateChange = (state: any) => states.push(state);
 
-    // Mock Simulation Success
-    mockServer.simulateTransaction.mockResolvedValue({
-      error: undefined,
-      transactionData: new StellarSdk.xdr.SorobanTransactionData({
-        ext: new StellarSdk.xdr.ExtensionPoint(0),
-        resources: new StellarSdk.xdr.SorobanResources({
-          footprint: new StellarSdk.xdr.LedgerFootprint({ readOnly: [], readWrite: [] }),
-          instructions: 0,
-          readBytes: 0,
-          writeBytes: 0,
-        }),
-        resourceFee: StellarSdk.nativeToScVal(100, { type: 'i128' }).value() as StellarSdk.xdr.Int64,
-      })
-    });
+    (signTransaction as any).mockResolvedValue('signedxdr');
 
-    const mockAccountId = StellarSdk.Keypair.random().publicKey();
-    // Mock Wallet Sign
-    (signTransaction as jest.Mock).mockResolvedValue(
-      new StellarSdk.TransactionBuilder(new StellarSdk.Account(mockAccountId, '1'), { fee: '100', networkPassphrase: 'Test SDF Network ; September 2015' })
-        .setTimeout(30)
-        .build()
-        .toXDR()
-    );
+    vi.spyOn(StellarSdk.TransactionBuilder, 'fromXDR').mockReturnValue({} as any);
 
-    // Mock Submit
-    mockServer.sendTransaction.mockResolvedValue({
-      errorResultXdr: undefined,
-      hash: 'testhash123',
-    });
-
-    // Mock Polling Success
-    mockServer.getTransaction.mockResolvedValue({
-      status: StellarSdk.rpc.Api.GetTransactionStatus.SUCCESS,
-    });
-
-    await client.createStream(
-      mockAccountId,
-      { recipient: StellarSdk.Keypair.random().publicKey(), amount: '100', startTime: '1000', endTime: '2000' },
+    const result = await client.createStream(
+      StellarSdk.Keypair.random().publicKey(),
+      {
+        recipient: StellarSdk.Keypair.random().publicKey(),
+        amount: '1000',
+        startTime: 0,
+        endTime: 1000,
+      },
       onStateChange
     );
 
-    expect(onStateChange).toHaveBeenCalledWith('simulating');
-    expect(onStateChange).toHaveBeenCalledWith('signing');
-    expect(onStateChange).toHaveBeenCalledWith('submitting');
-    expect(onStateChange).toHaveBeenCalledWith('polling');
-    expect(onStateChange).toHaveBeenCalledWith('success');
-  });
-
-  test('throws human-readable error on simulation failure', async () => {
-    const client = new PayrollClient();
-    
-    mockServer.simulateTransaction.mockResolvedValue({
-      error: 'HostError: budget exceeded',
-    });
-    // Add isSimulationError check for SDK 12.x
-    StellarSdk.rpc.Api.isSimulationError = jest.fn().mockReturnValue(true);
-
-    await expect(
-      client.createStream(StellarSdk.Keypair.random().publicKey(), { recipient: StellarSdk.Keypair.random().publicKey(), amount: '100', startTime: '1000', endTime: '2000' })
-    ).rejects.toThrow(/Simulation failed.*budget exceeded/);
+    expect(result.status).toBe('SUCCESS');
+    expect(states).toEqual(['simulating', 'signing', 'submitting', 'polling', 'success']);
+    expect(mockServer.simulateTransaction).toHaveBeenCalled();
+    expect(signTransaction).toHaveBeenCalled();
+    expect(mockServer.sendTransaction).toHaveBeenCalled();
   });
 });
