@@ -133,7 +133,7 @@ export class PayrollClient {
 
       if (onStateChange) onStateChange('signing')
       
-      const signedXdr = await signTransaction(xdrToSign, NETWORK.name)
+      const signedXdr = await signTransaction(xdrToSign, NETWORK.networkPassphrase, sourceAddress)
       const signedTx = StellarSdk.TransactionBuilder.fromXDR(signedXdr, NETWORK.networkPassphrase) as StellarSdk.Transaction
 
       if (onStateChange) onStateChange('submitting')

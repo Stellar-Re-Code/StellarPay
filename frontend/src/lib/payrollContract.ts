@@ -184,7 +184,7 @@ export async function invokeContract<T = unknown>(
   const prepared = rpc.assembleTransaction(tx, sim).build()
 
   handlers.onAwaitingSignature?.()
-  const signedXdr = await signTransaction(prepared.toXDR(), NETWORK.networkPassphrase)
+  const signedXdr = await signTransaction(prepared.toXDR(), NETWORK.networkPassphrase, sourceAccount)
   const signedTx = TransactionBuilder.fromXDR(signedXdr, NETWORK.networkPassphrase)
 
   handlers.onSubmitting?.()
